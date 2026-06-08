@@ -1,6 +1,6 @@
 # 🐺 SecurityNews
 
-Plateforme de veille cybersécurité personnalisée par profils, alimentée par Claude AI.
+Customized cybersecurity intelligence platform by profiles, powered by Claude AI.
 
 ## Stack
 
@@ -8,80 +8,39 @@ Plateforme de veille cybersécurité personnalisée par profils, alimentée par 
 - **Worker:** TypeScript (Node.js) + pg-boss + Drizzle ORM
 - **DB:** PostgreSQL 16
 - **Cache:** Redis 7
-- **AI:** Anthropic Claude (haiku pour daily/weekly, sonnet pour monthly)
+- **AI:** Anthropic Claude (haiku for daily/weekly, sonnet for monthly)
 
-## Démarrage rapide
+## Quick Start
 
-### 1. Prérequis
+### 1. Prerequisites
 
 - Docker + Docker Compose
-- Clé API Anthropic → https://console.anthropic.com/
+- Anthropic API Key → https://console.anthropic.com/
 
 ### 2. Configuration
 
 ```bash
 cp .env.example .env
-# Éditer .env : renseigner POSTGRES_PASSWORD et ANTHROPIC_API_KEY
-```
-
-### 3. Lancer
-
-```bash
-# Créer les volumes
+# Edit .env: fill in POSTGRES_PASSWORD and ANTHROPIC_API_KEY
+3. StartBash# Create volumes
 mkdir -p /opt/securitynews/volumes/{postgres,redis,logs}
-
+```
 # Build + start
-docker compose up -d --build
-
-# Vérifier les logs du worker
-docker compose logs -f worker
-```
-
-L'app est disponible sur **http://localhost:3000**
-
-### 4. Vérification
-
 ```bash
-# Status des services
+docker compose up -d --build
+```
+# Check worker logs
+```bash
+docker compose logs -f worker
+The app is available at http://localhost:30004. VerificationBash# Services status
 docker compose ps
-
-# Logs frontend
+```
+# Frontend logs
+```bash
 docker compose logs frontend
-
-# Logs worker (fetch RSS + jobs AI)
+```
+# Worker logs (RSS fetch + AI jobs)
+```bash
 docker compose logs -f worker
 ```
-
-## Pages
-
-| URL | Description |
-|-----|-------------|
-| `/` | Home — preview actualités + Big Alert si critique |
-| `/security-news` | Sélecteur de profils |
-| `/security-news/nemea` | Profil Nemea — CVE/0day avec résumés AI |
-| `/reporting` | KPIs — sources, volumes, stats |
-
-## Profils
-
-Les profils sont gérés manuellement en BDD. Le profil **Nemea** est seedé automatiquement au démarrage du worker.
-
-## Tâches planifiées (pg-boss)
-
-| Cron | Action |
-|------|--------|
-| `0 */2 * * *` | Fetch RSS + NVD + CISA KEV |
-| `0 6 * * *` | Résumé daily par profil |
-| `0 7 * * 1` | Résumé weekly (lundi) |
-| `0 7 1 * *` | Résumé monthly (1er du mois) |
-
-Le scan "Big News" (2-3h) est implémenté mais **désactivé par défaut**.
-
-## Variables d'environnement
-
-| Variable | Description |
-|----------|-------------|
-| `DATABASE_URL` | URL PostgreSQL |
-| `POSTGRES_PASSWORD` | Password BDD |
-| `REDIS_URL` | URL Redis |
-| `ANTHROPIC_API_KEY` | Clé API Claude |
-| `PUBLIC_API_URL` | URL publique du frontend |
+PagesURLDescription/Home — news preview + Big Alert if critical/security-newsProfile selector/security-news/nemeaNemea Profile — CVE/0day with AI summaries/reportingKPIs — sources, volumes, statsProfilesProfiles are managed manually in the DB. The Nemea profile is automatically seeded when the worker starts.Scheduled Tasks (pg-boss)CronAction0 */2 * * *Fetch RSS + NVD + CISA KEV0 6 * * *Daily summary per profile0 7 * * 1Weekly summary (Monday)0 7 1 * *Monthly summary (1st of the month)The "Big News" scan (2-3h) is implemented but disabled by default.Environment VariablesVariableDescriptionDATABASE_URLPostgreSQL URLPOSTGRES_PASSWORDDB PasswordREDIS_URLRedis URLANTHROPIC_API_KEYClaude API KeyPUBLIC_API_URLFrontend public URL
