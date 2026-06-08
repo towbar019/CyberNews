@@ -1,0 +1,87 @@
+---
+import Base from "../../layouts/Base.astro";
+import { getProfiles, getLatestSummary, getArticlesForProfile } from "../../lib/db";
+
+let profiles: Awaited<ReturnType<typeof getProfiles>> = [];
+let dbError = false;
+
+try {
+  profiles = await getProfiles();
+} catch {
+  dbError = true;
+}
+---
+
+<Base title="SecurityNews">
+  <div class="page">
+    <div class="page-header">
+      <h1 class="page-title">SecurityNews</h1>
+      <p class="page-sub">Résumés AI — Daily, Weekly, Monthly par profil</p>
+    </div>
+
+    {dbError && <div class="empty-state">⚠️ Base de données non disponible.</div>}
+
+    {!dbError && (
+      <div class="profiles-nav">
+        {profiles.map((p) => (
+          <a href={`/security-news/${p.name.toLowerCase()}`} class="profile-nav-card">
+            <span class="profile-nav-name">{p.name}</span>
+            <span class="profile-nav-sub">{p.config.description?.slice(0, 60)}…</span>
+          </a>
+        ))}
+        {profiles.length === 0 && (
+          <div class="empty-state" style="width:100%;">🔄 Chargement…</div>
+        )}
+      </div>
+    )}
+  </div>
+</Base>
+
+<style>
+  .page { max-width: 1100px; margin: 0 auto; padding: 2rem 1.5rem; }
+  .page-header { margin-bottom: 2rem; }
+  .page-title { font-size: 1.8rem; font-weight: 700; margin-bottom: 0.4rem; }
+  .page-sub { color: #8899b4; }
+
+  .profiles-nav {
+    display: grid;
+    gap: 1rem;
+    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  }
+
+  .profile-nav-card {
+    background: #0d1424;
+    border: 1px solid #1e2d47;
+    border-radius: 10px;
+    padding: 1.5rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    text-decoration: none;
+    transition: border-color .15s, transform .15s;
+  }
+  .profile-nav-card:hover {
+    border-color: #3b82f644;
+    transform: translateY(-2px);
+    color: var(--text);
+  }
+
+  .profile-nav-name {
+    font-size: 1.1rem;
+    font-weight: 700;
+    color: #60a5fa;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+  }
+
+  .profile-nav-sub { font-size: 0.83rem; color: #8899b4; }
+
+  .empty-state {
+    background: #0d1424;
+    border: 1px solid #1e2d47;
+    border-radius: 8px;
+    padding: 2rem;
+    text-align: center;
+    color: #8899b4;
+  }
+</style>

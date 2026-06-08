@@ -1,0 +1,520 @@
+---
+import Base from "../../layouts/Base.astro";
+import CVEChart from "../../components/CVEChart";
+import PDFExportButton from "../../components/PDFExportButton";
+import {
+  getProfileByName,
+  getLatestSummary,
+  getArticlesForProfile,
+  getArticlesForProfileByDate,
+  getSummaryForDate,
+  getSourcesForProfile,
+  getCveChartData,
+  getBigAlertArticles,
+} from "../../lib/db";
+import { getLang, t } from "../../lib/i18n";
+
+const { profile: profileSlug } = Astro.params;
+const lang = getLang(Astro.url);
+const tab = (Astro.url.searchParams.get("tab") ?? "daily") as "daily" | "weekly" | "monthly";
+const viewMode = (Astro.url.searchParams.get("view") ?? "summary") as "summary" | "detailed";
+const dateParam = Astro.url.searchParams.get("date");
+const selectedDate = dateParam ? new Date(dateParam + "T00:00:00Z") : null;
+
+let profile = null;
+let summary = null;
+let articlesData = { articles: [] as any[], total: 0 };
+let cveData: any[] = [];
+let bigAlerts: any[] = [];
+let sources: { source: string; count: number }[] = [];
+let dbError = false;
+
+try {
+  profile = await getProfileByName(profileSlug ?? "");
+  if (profile) {
+    if (selectedDate) {
+      [summary, articlesData, sources] = await Promise.all([
+        getSummaryForDate(profile.id, tab, selectedDate, lang),
+        getArticlesForProfileByDate(profile.id, selectedDate, 80),
+        getSourcesForProfile(profile.id, selectedDate),
+      ]);
+    } else {
+      [summary, articlesData, bigAlerts, sources] = await Promise.all([
+        getLatestSummary(profile.id, tab, lang),
+        getArticlesForProfile(profile.id, 1, 80),
+        getBigAlertArticles(),
+        getSourcesForProfile(profile.id),
+      ]);
+    }
+    if ((profile.config.monitoredApps ?? []).length > 0) {
+      cveData = await getCveChartData(profile.id, profile.config.monitoredApps ?? []);
+    }
+  }
+} catch (e) {
+  console.error(e);
+  dbError = true;
+}
+
+if (!profile && !dbError) return Astro.redirect("/security-news");
+
+const tabs = [
+  { id: "daily",   label: "Daily" },
+  { id: "weekly",  label: "Weekly" },
+  { id: "monthly", label: "Monthly" },
+] as const;
+
+// Date navigation helpers
+const todayStr = new Date().toISOString().slice(0, 10);
+const selectedDateStr = selectedDate ? selectedDate.toISOString().slice(0, 10) : "";
+
+function prevDay(d: string): string {
+  const dt = new Date(d + "T00:00:00Z");
+  dt.setUTCDate(dt.getUTCDate() - 1);
+  return dt.toISOString().slice(0, 10);
+}
+function nextDay(d: string): string {
+  const dt = new Date(d + "T00:00:00Z");
+  dt.setUTCDate(dt.getUTCDate() + 1);
+  return dt.toISOString().slice(0, 10);
+}
+
+function makeUrl(params: Record<string, string | null>): string {
+  const base = new URLSearchParams();
+  base.set("tab", tab);
+  base.set("view", viewMode);
+  if (lang === "en") base.set("lang", "en");
+  if (selectedDateStr) base.set("date", selectedDateStr);
+  for (const [k, v] of Object.entries(params)) {
+    if (v === null) base.delete(k); else base.set(k, v);
+  }
+  return `/security-news/${profileSlug}?${base.toString()}`;
+}
+
+function markdownToHtml(md: string): string {
+  return md
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+    .replace(/^# (.+)$/gm, "<h1>$1</h1>")
+    .replace(/^## (.+)$/gm, "<h2>$1</h2>")
+    .replace(/^### (.+)$/gm, "<h3>$1</h3>")
+    .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
+    .replace(/\*(.+?)\*/g, "<em>$1</em>")
+    .replace(/`(.+?)`/g, "<code>$1</code>")
+    .replace(/\[(.+?)\]\((.+?)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>')
+    .replace(/^---$/gm, "<hr/>")
+    .replace(/^- (.+)$/gm, "<li>$1</li>")
+    .replace(/\n\n/g, "</p><p>");
+}
+
+const profileAccent = profile?.name.toLowerCase() === "axel" ? "#22d3ee" : "#60a5fa";
+---
+
+<Base title={profile?.name ?? "Profil"}>
+  <div class="page">
+
+    {dbError && <div class="empty-state">⚠️ Base de données non disponible.</div>}
+
+    {!dbError && profile && (
+      <>
+        <!-- Breadcrumb + header -->
+        <div class="profile-header">
+          <div class="breadcrumb">
+            <a href="/security-news">SecurityNews</a>
+            <span class="bc-sep">/</span>
+            <span>{profile.name}</span>
+          </div>
+          <div class="profile-title-row">
+            <div>
+              <h1 class="profile-title" style={`color: ${profileAccent};`}>{profile.name}</h1>
+              <p class="profile-desc">{profile.config.description}</p>
+            </div>
+            <span class="articles-count">{articlesData.total} articles</span>
+          </div>
+        </div>
+
+        <!-- Big Alert inline -->
+        {bigAlerts.length > 0 && (
+          <div class="inline-alert">
+            <span>🚨</span>
+            <span>{bigAlerts.length} {bigAlerts.length > 1 ? t("news","alerts_label",lang) : t("news","alert_label",lang)} {bigAlerts.length > 1 ? t("news","criticals",lang) : t("news","critical",lang)} — CISA KEV ou CVSS ≥ 9.8</span>
+          </div>
+        )}
+
+        <!-- Tabs + View toggle -->
+        <div class="tabs-row">
+          <div class="tabs">
+            {tabs.map((t) => (
+              <a
+                href={makeUrl({ tab: t.id })}
+                class={`tab${tab === t.id ? " tab-active" : ""}`}
+                style={tab === t.id ? `border-bottom-color: ${profileAccent}; color: ${profileAccent};` : ""}
+              >
+                {t.label}
+              </a>
+            ))}
+          </div>
+          <div class="view-toggle">
+            <a href={makeUrl({ view: "summary" })} class={`vtoggle${viewMode === "summary" ? " vtoggle-active" : ""}`}>📋 {lang === "en" ? "Summary" : "Résumé"}</a>
+            <a href={makeUrl({ view: "detailed" })} class={`vtoggle${viewMode === "detailed" ? " vtoggle-active" : ""}`}>🔎 {lang === "en" ? "Detailed" : "Détaillé"}</a>
+          </div>
+        </div>
+
+        <!-- Date navigator -->
+        <div class="date-nav">
+          {selectedDateStr ? (
+            <>
+              <a href={makeUrl({ date: prevDay(selectedDateStr) })} class="date-btn">‹ {lang === "en" ? "Previous" : "Précédent"}</a>
+              <span class="date-current">
+                📅 {new Date(selectedDateStr + "T00:00:00Z").toLocaleDateString(lang === "en" ? "en-GB" : "fr-FR", { weekday: "long", day: "numeric", month: "long", year: "numeric" })}
+              </span>
+              {selectedDateStr < todayStr
+                ? <a href={makeUrl({ date: nextDay(selectedDateStr) })} class="date-btn">{lang === "en" ? "Next" : "Suivant"} ›</a>
+                : <span class="date-btn date-btn-disabled">{lang === "en" ? "Next" : "Suivant"} ›</span>
+              }
+              <a href={makeUrl({ date: null })} class="date-reset">↩ {lang === "en" ? "Today" : "Aujourd'hui"}</a>
+            </>
+          ) : (
+            <>
+              <span class="date-current-live">🟢 {lang === "en" ? "Live" : "Temps réel"}</span>
+              <span class="date-hint">
+                {lang === "en" ? "Go back in time →" : "Navigue dans le temps →"}
+                <input
+                  type="date"
+                  class="date-input"
+                  max={todayStr}
+                  onchange={`window.location.href='/security-news/${profileSlug}?tab=${tab}&view=${viewMode}${lang === "en" ? "&lang=en" : ""}&date='+this.value`}
+                />
+              </span>
+            </>
+          )}
+        </div>
+
+        <!-- Layout -->
+        <div class="layout">
+          <!-- Left -->
+          <div class="layout-main">
+
+            {/* MODE RÉSUMÉ : AI summary card */}
+            {viewMode === "summary" && (
+              <div class="card">
+                <div class="card-header">
+                  <div>
+                    <div class="card-label">{lang === "en" ? "AI Summary — " : "Résumé AI — "}{tab === "daily" ? t("news","summary_today",lang) : tab === "weekly" ? t("news","summary_week",lang) : t("news","summary_month",lang)}</div>
+                    {summary && (
+                      <div class="card-meta">
+                        {t("news","generated",lang)} {new Date(summary.generated_at).toLocaleString(lang === "en" ? "en-GB" : "fr-FR")}
+                      </div>
+                    )}
+                  </div>
+                  {summary && (
+                    <PDFExportButton
+                      client:load
+                      profileName={profile.name}
+                      content={summary.content_md}
+                    />
+                  )}
+                </div>
+                <div class="card-body">
+                  {!summary && (
+                    <div class="empty-summary">
+                      <div>🤖</div>
+                      <div>{t("news","no_summary",lang)} {tab} {lang === "en" ? "generated" : "généré"}.</div>
+                      <div class="empty-summary-when">
+                        {tab === "daily" && t("news","next_daily",lang)}
+                        {tab === "weekly" && t("news","next_weekly",lang)}
+                        {tab === "monthly" && t("news","next_monthly",lang)}
+                      </div>
+                    </div>
+                  )}
+                  {summary && (
+                    <div class="summary-content" set:html={markdownToHtml(summary.content_md)} />
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* MODE DÉTAILLÉ : articles bruts avec CVSS + source */}
+            {viewMode === "detailed" && (
+              <div class="card">
+                <div class="card-header">
+                  <div class="card-label">🔎 {lang === "en" ? "Raw articles" : "Articles bruts"} — {articlesData.total} {t("news","articles",lang)}</div>
+                  <span style="font-size:0.72rem;color:#4d6280;">{articlesData.articles.length} {lang === "en" ? "shown" : "affichés"}</span>
+                </div>
+                <div class="card-body articles-list">
+                  {articlesData.articles.length === 0 && (
+                    <div class="empty-summary">{lang === "en" ? "No articles available." : "Aucun article disponible."}</div>
+                  )}
+                  {articlesData.articles.map((a: any) => (
+                    <div class={`article-row${a.is_cisa_kev ? " article-kev" : ""}${a.cvss_score >= 9 ? " article-critical" : ""}`}>
+                      <div class="article-meta">
+                        <span class="article-source">{a.source}</span>
+                        {a.is_cisa_kev && <span class="badge-kev">CISA KEV</span>}
+                        {a.cvss_score && (
+                          <span class={`badge-cvss${a.cvss_score >= 9 ? " cvss-critical" : a.cvss_score >= 7 ? " cvss-high" : ""}`}>
+                            CVSS {a.cvss_score.toFixed(1)}
+                          </span>
+                        )}
+                        <span class="article-date">{new Date(a.published_at).toLocaleDateString("fr-FR")}</span>
+                      </div>
+                      <a href={a.url} target="_blank" rel="noopener" class="article-title">{a.title}</a>
+                      {a.content && (
+                        <p class="article-snippet">{a.content.slice(0, 200)}{a.content.length > 200 ? "…" : ""}</p>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <!-- Sources card (replaces Timeline) -->
+            {sources.length > 0 && (
+              <div class="card">
+                <div class="card-header">
+                  <div class="card-label">📡 {lang === "en" ? "Sources" : "Sources"} — {articlesData.total} {t("news","articles",lang)}</div>
+                  {selectedDateStr && <span style="font-size:0.72rem;color:#4d6280;">{lang === "en" ? "filtered:" : "filtré :"} {selectedDateStr}</span>}
+                </div>
+                <div class="card-body">
+                  <div class="sources-list">
+                    {sources.map((s) => (
+                      <div class="source-row">
+                        <span class="source-name">{s.source}</span>
+                        <div class="source-bar-wrap">
+                          <div
+                            class="source-bar"
+                            style={`width: ${Math.round((s.count / sources[0].count) * 100)}%`}
+                          />
+                        </div>
+                        <span class="source-count">{s.count}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+
+          <!-- Right sidebar -->
+          <div class="layout-side">
+            <!-- CVE Chart -->
+            {(profile.config.monitoredApps ?? []).length > 0 && (
+              <div class="card">
+                <div class="card-header">
+                  <div class="card-label">📊 {t("news","cve_chart",lang)}</div>
+                </div>
+                <div class="card-body">
+                  <CVEChart
+                    client:load
+                    data={cveData}
+                    monitoredApps={profile.config.monitoredApps ?? []}
+                  />
+                </div>
+              </div>
+            )}
+
+            <!-- Monitored apps -->
+            {(profile.config.monitoredApps ?? []).length > 0 && (
+              <div class="card">
+                <div class="card-header">
+                  <div class="card-label">🎯 {t("news","monitored",lang)}</div>
+                </div>
+                <div class="card-body">
+                  <div class="apps-grid">
+                    {(profile.config.monitoredApps ?? []).map((app: string) => (
+                      <span class="app-tag">{app}</span>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      </>
+    )}
+  </div>
+</Base>
+
+<style>
+  .page { max-width: 1200px; margin: 0 auto; padding: 2rem 1.5rem; }
+
+  /* Header */
+  .breadcrumb { font-size: 0.78rem; color: #4d6280; margin-bottom: 0.75rem; display: flex; gap: 0.4rem; align-items: center; }
+  .breadcrumb a { color: #4d6280; }
+  .breadcrumb a:hover { color: #60a5fa; }
+  .bc-sep { color: #2a3f60; }
+  .profile-header { margin-bottom: 1.5rem; }
+  .profile-title-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; flex-wrap: wrap; }
+  .profile-title { font-size: 1.8rem; font-weight: 800; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 0.2rem; }
+  .profile-desc { color: #8899b4; font-size: 0.88rem; }
+  .articles-count { background: #111827; border: 1px solid #1e2d47; border-radius: 6px; padding: 4px 12px; font-size: 0.78rem; color: #8899b4; white-space: nowrap; }
+
+  /* Alert */
+  .inline-alert {
+    background: #1a0a0b;
+    border: 1px solid #ef444444;
+    border-left: 3px solid #ef4444;
+    border-radius: 7px;
+    padding: 0.65rem 1rem;
+    margin-bottom: 1.25rem;
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    font-size: 0.83rem;
+    color: #fca5a5;
+  }
+
+  /* Tabs row */
+  .tabs-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    border-bottom: 1px solid #1e2d47;
+    margin-bottom: 1.5rem;
+    gap: 1rem;
+    flex-wrap: wrap;
+  }
+  /* Tabs */
+  .tabs {
+    display: flex;
+    gap: 0;
+    border-bottom: none;
+    margin-bottom: 0;
+  }
+  .tab {
+    padding: 0.6rem 1.25rem;
+    font-size: 0.88rem;
+    font-weight: 500;
+    color: #8899b4;
+    border-bottom: 2px solid transparent;
+    text-decoration: none;
+    transition: color .15s, border-color .15s;
+    margin-bottom: -1px;
+  }
+  .tab:hover { color: #c8d4e8; }
+  .tab-active { color: #60a5fa; border-bottom-color: #60a5fa; font-weight: 600; }
+
+  /* View toggle */
+  .view-toggle {
+    display: flex;
+    gap: 0.35rem;
+    padding-bottom: 0.5rem;
+  }
+  .vtoggle {
+    padding: 0.3rem 0.75rem;
+    font-size: 0.78rem;
+    font-weight: 500;
+    color: #8899b4;
+    border: 1px solid #1e2d47;
+    border-radius: 6px;
+    text-decoration: none;
+    transition: all .15s;
+  }
+  .vtoggle:hover { color: #c8d4e8; border-color: #2a3f60; }
+  .vtoggle-active { color: #3b82f6; border-color: #3b82f6; background: #0d1d36; font-weight: 600; }
+
+  /* Articles list (mode détaillé) */
+  .articles-list { display: flex; flex-direction: column; gap: 0; }
+  .article-row {
+    padding: 0.8rem 0;
+    border-bottom: 1px solid #111827;
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+  }
+  .article-row:last-child { border-bottom: none; }
+  .article-row.article-kev { border-left: 2px solid #ef4444; padding-left: 0.75rem; }
+  .article-row.article-critical { border-left: 2px solid #f97316; padding-left: 0.75rem; }
+  .article-meta { display: flex; align-items: center; gap: 0.4rem; flex-wrap: wrap; }
+  .article-source { font-size: 0.7rem; color: #4d6280; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; }
+  .article-date { font-size: 0.7rem; color: #4d6280; margin-left: auto; }
+  .article-title { font-size: 0.87rem; color: #c8d4e8; font-weight: 500; line-height: 1.4; text-decoration: none; }
+  .article-title:hover { color: #60a5fa; }
+  .article-snippet { font-size: 0.78rem; color: #4d6280; line-height: 1.5; margin: 0; }
+  .badge-kev { background: #1a0808; border: 1px solid #ef4444; color: #ef4444; font-size: 0.65rem; font-weight: 700; padding: 1px 6px; border-radius: 3px; text-transform: uppercase; }
+  .badge-cvss { background: #111827; border: 1px solid #374151; color: #9ca3af; font-size: 0.65rem; font-weight: 700; padding: 1px 6px; border-radius: 3px; }
+  .badge-cvss.cvss-critical { border-color: #f97316; color: #f97316; background: #1a0f05; }
+  .badge-cvss.cvss-high { border-color: #eab308; color: #eab308; background: #16130a; }
+
+  /* Layout */
+  .layout { display: grid; grid-template-columns: 1fr 320px; gap: 1.25rem; align-items: start; }
+  @media (max-width: 900px) { .layout { grid-template-columns: 1fr; } }
+  .layout-main { display: flex; flex-direction: column; gap: 1.25rem; }
+  .layout-side { display: flex; flex-direction: column; gap: 1.25rem; }
+
+  /* Card */
+  .card { background: #0d1424; border: 1px solid #1e2d47; border-radius: 10px; overflow: hidden; }
+  .card-header {
+    padding: 0.85rem 1.1rem;
+    border-bottom: 1px solid #1e2d47;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+  }
+  .card-label { font-size: 0.78rem; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; color: #8899b4; }
+  .card-meta { font-size: 0.72rem; color: #4d6280; margin-top: 2px; }
+  .card-body { padding: 1.1rem; }
+
+  /* Summary — meilleur espacement */
+  .empty-summary { text-align: center; color: #8899b4; padding: 2rem 0; font-size: 0.88rem; line-height: 1.8; }
+  .empty-summary-when { font-size: 0.78rem; color: #4d6280; margin-top: 0.25rem; }
+
+  :global(.summary-content) { line-height: 1.75; }
+  :global(.summary-content h1) { font-size: 1.15rem; font-weight: 700; margin: 1.5rem 0 0.75rem; color: #e8edf5; padding-bottom: 0.4rem; border-bottom: 1px solid #1e2d47; }
+  :global(.summary-content h2) { font-size: 1rem; font-weight: 600; margin: 1.75rem 0 0.75rem; color: #f59e0b; }
+  :global(.summary-content h3) { font-size: 0.9rem; font-weight: 600; margin: 1.25rem 0 0.5rem; color: #ef4444; }
+  :global(.summary-content p) { color: #9baabc; font-size: 0.88rem; line-height: 1.75; margin-bottom: 0.75rem; }
+  :global(.summary-content li) { color: #9baabc; font-size: 0.88rem; line-height: 1.75; margin-bottom: 0.4rem; }
+  :global(.summary-content ul) { padding-left: 1.5rem; margin: 0.5rem 0 1rem; }
+  :global(.summary-content strong) { color: #e8edf5; font-weight: 600; }
+  :global(.summary-content a) { color: #60a5fa; text-decoration: underline; text-underline-offset: 2px; }
+  :global(.summary-content code) { background: #111827; padding: 2px 6px; border-radius: 3px; font-size: 0.82em; color: #7dd3fc; }
+  :global(.summary-content hr) { border: none; border-top: 1px solid #1e2d47; margin: 1.5rem 0; }
+
+  /* Date navigator */
+  .date-nav {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    margin-bottom: 1.5rem;
+    flex-wrap: wrap;
+    font-size: 0.82rem;
+  }
+  .date-btn {
+    padding: 0.3rem 0.8rem;
+    border: 1px solid #1e2d47;
+    border-radius: 6px;
+    color: #8899b4;
+    text-decoration: none;
+    transition: all .15s;
+  }
+  .date-btn:hover { border-color: #3b82f6; color: #60a5fa; }
+  .date-btn-disabled { color: #2a3f60; border-color: #111827; cursor: default; }
+  .date-current { color: #c8d4e8; font-weight: 600; padding: 0.3rem 0.8rem; background: #0d1424; border: 1px solid #1e2d47; border-radius: 6px; }
+  .date-current-live { color: #22c55e; font-size: 0.8rem; font-weight: 600; }
+  .date-hint { color: #4d6280; display: flex; align-items: center; gap: 0.5rem; }
+  .date-reset { color: #60a5fa; text-decoration: none; font-size: 0.78rem; padding: 0.3rem 0.6rem; }
+  .date-reset:hover { text-decoration: underline; }
+  .date-input {
+    background: #0d1424;
+    border: 1px solid #1e2d47;
+    border-radius: 5px;
+    color: #8899b4;
+    padding: 0.25rem 0.5rem;
+    font-size: 0.78rem;
+    cursor: pointer;
+  }
+  .date-input:focus { outline: none; border-color: #3b82f6; }
+
+  /* Sources list */
+  .sources-list { display: flex; flex-direction: column; gap: 0.6rem; }
+  .source-row { display: flex; align-items: center; gap: 0.6rem; }
+  .source-name { font-size: 0.75rem; color: #8899b4; width: 150px; flex-shrink: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .source-bar-wrap { flex: 1; height: 5px; background: #111827; border-radius: 3px; overflow: hidden; }
+  .source-bar { height: 100%; background: #3b82f6; border-radius: 3px; min-width: 2px; }
+  .source-count { font-size: 0.72rem; color: #4d6280; width: 24px; text-align: right; flex-shrink: 0; }
+
+  /* Apps grid */
+  .apps-grid { display: flex; flex-wrap: wrap; gap: 0.4rem; }
+  .app-tag { background: #111827; border: 1px solid #1e2d47; border-radius: 4px; padding: 3px 9px; font-size: 0.72rem; color: #8899b4; }
+
+  .empty-state { background: #0d1424; border: 1px solid #1e2d47; border-radius: 8px; padding: 2rem; text-align: center; color: #8899b4; }
+</style>

@@ -1,0 +1,143 @@
+---
+import Base from "../layouts/Base.astro";
+import VolumeChart from "../components/VolumeChart";
+import { getReportingStats } from "../lib/db";
+import { getLang, t } from "../lib/i18n";
+
+const lang = getLang(Astro.url);
+
+let stats: Awaited<ReturnType<typeof getReportingStats>> | null = null;
+let dbError = false;
+
+try {
+  stats = await getReportingStats();
+} catch {
+  dbError = true;
+}
+
+function timeAgo(date: Date | null): string {
+  if (!date) return t("reporting", "never", lang);
+  const diff = Math.floor((Date.now() - new Date(date).getTime()) / 1000);
+  if (lang === "en") {
+    if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
+    if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
+    return `${Math.floor(diff / 86400)}d ago`;
+  }
+  if (diff < 3600) return `Il y a ${Math.floor(diff / 60)}m`;
+  if (diff < 86400) return `Il y a ${Math.floor(diff / 3600)}h`;
+  return `Il y a ${Math.floor(diff / 86400)}j`;
+}
+---
+
+<Base title="Reporting">
+  <div class="page">
+    <div class="page-header">
+      <h1 class="page-title">{t("reporting","title",lang)}</h1>
+      <p class="page-sub">{t("reporting","sub",lang)}</p>
+    </div>
+
+    {dbError && <div class="empty-state">⚠️ {lang === "en" ? "Database unavailable." : "Base de données non disponible."}</div>}
+
+    {stats && (
+      <>
+        <!-- KPI Grid -->
+        <div class="kpi-grid">
+          {[
+            { label: t("reporting","total_art",lang), value: stats.totalArticles.toLocaleString(lang === "en" ? "en-US" : "fr-FR"), icon: "📰", color: "#60a5fa" },
+            { label: t("reporting","ai_summaries",lang), value: stats.totalSummaries.toLocaleString(lang === "en" ? "en-US" : "fr-FR"), icon: "🤖", color: "#22d3ee" },
+            { label: t("reporting","active_src",lang), value: stats.sources.length, icon: "📡", color: "#a78bfa" },
+            { label: t("reporting","art_30d",lang), value: stats.volume.reduce((s, v) => s + v.count, 0).toLocaleString(lang === "en" ? "en-US" : "fr-FR"), icon: "📈", color: "#22c55e" },
+          ].map((kpi) => (
+            <div class="kpi-card" style={`--kpi-color: ${kpi.color};`}>
+              <div class="kpi-icon">{kpi.icon}</div>
+              <div class="kpi-value" style={`color: ${kpi.color};`}>{kpi.value}</div>
+              <div class="kpi-label">{kpi.label}</div>
+            </div>
+          ))}
+        </div>
+
+        <!-- Volume chart -->
+        <div class="card">
+          <div class="card-header">
+            <div class="card-label">📈 {t("reporting","volume_title",lang)}</div>
+          </div>
+          <div class="card-body">
+            <VolumeChart client:load volume={stats.volume} />
+          </div>
+        </div>
+
+        <!-- Sources table -->
+        <div class="card">
+          <div class="card-header">
+            <div class="card-label">📡 {t("reporting","sources_title",lang)}</div>
+          </div>
+          <div style="overflow-x: auto;">
+            <table class="table">
+              <thead>
+                <tr>
+                  <th>{t("reporting","source",lang)}</th>
+                  <th class="th-right">{t("reporting","articles",lang)}</th>
+                  <th class="th-right">{t("reporting","last_fetch",lang)}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {stats.sources.map((s, i) => (
+                  <tr class={i < stats!.sources.length - 1 ? "tr-border" : ""}>
+                    <td>
+                      <div class="source-name">{s.name}</div>
+                      <div class="source-url">{s.url}</div>
+                    </td>
+                    <td class="td-right">
+                      <span class="count-badge">{s.article_count.toLocaleString(lang === "en" ? "en-US" : "fr-FR")}</span>
+                    </td>
+                    <td class="td-right source-time">{timeAgo(s.last_fetched)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </>
+    )}
+  </div>
+</Base>
+
+<style>
+  .page { max-width: 1100px; margin: 0 auto; padding: 2rem 1.5rem; display: flex; flex-direction: column; gap: 1.5rem; }
+  .page-header { }
+  .page-title { font-size: 1.8rem; font-weight: 700; margin-bottom: 0.4rem; }
+  .page-sub { color: #8899b4; }
+
+  .kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 1rem; }
+  .kpi-card {
+    background: #0d1424;
+    border: 1px solid #1e2d47;
+    border-radius: 10px;
+    padding: 1.25rem;
+    text-align: center;
+    transition: border-color .15s;
+  }
+  .kpi-card:hover { border-color: var(--kpi-color, #3b82f6); }
+  .kpi-icon { font-size: 1.75rem; margin-bottom: 0.4rem; }
+  .kpi-value { font-size: 1.7rem; font-weight: 800; margin-bottom: 0.2rem; }
+  .kpi-label { font-size: 0.75rem; color: #8899b4; }
+
+  .card { background: #0d1424; border: 1px solid #1e2d47; border-radius: 10px; overflow: hidden; }
+  .card-header { padding: 0.85rem 1.1rem; border-bottom: 1px solid #1e2d47; }
+  .card-label { font-size: 0.78rem; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; color: #8899b4; }
+  .card-body { padding: 1.1rem; }
+
+  .table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+  .table th { text-align: left; padding: 0.75rem 1.25rem; color: #8899b4; font-weight: 600; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.5px; }
+  .th-right { text-align: right; }
+  .tr-border td { border-bottom: 1px solid #1e2d47; }
+  .table td { padding: 0.75rem 1.25rem; }
+
+  .source-name { font-weight: 500; margin-bottom: 2px; }
+  .source-url { font-size: 0.72rem; color: #4d6280; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 350px; }
+  .td-right { text-align: right; }
+  .count-badge { background: #111827; border: 1px solid #1e2d47; border-radius: 5px; padding: 2px 8px; font-size: 0.8rem; }
+  .source-time { font-size: 0.8rem; color: #8899b4; white-space: nowrap; }
+
+  .empty-state { background: #0d1424; border: 1px solid #1e2d47; border-radius: 8px; padding: 2rem; text-align: center; color: #8899b4; }
+</style>

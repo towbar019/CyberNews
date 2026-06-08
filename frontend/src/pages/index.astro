@@ -1,0 +1,159 @@
+---
+import Base from "../layouts/Base.astro";
+import { getBigAlertArticles, getRecentArticles } from "../lib/db";
+import { getLang, translations } from "../lib/i18n";
+
+const lang = getLang(Astro.url);
+const h = translations.home;
+const f = translations.features;
+
+let bigAlerts: Awaited<ReturnType<typeof getBigAlertArticles>> = [];
+let recentArticles: Awaited<ReturnType<typeof getRecentArticles>> = [];
+let dbError = false;
+
+try {
+  [bigAlerts, recentArticles] = await Promise.all([
+    getBigAlertArticles(),
+    getRecentArticles(8),
+  ]);
+} catch {
+  dbError = true;
+}
+
+function timeAgo(date: Date): string {
+  const diff = Math.floor((Date.now() - new Date(date).getTime()) / 1000);
+  if (diff < 3600) return `${Math.floor(diff / 60)}m`;
+  if (diff < 86400) return `${Math.floor(diff / 3600)}h`;
+  return `${Math.floor(diff / 86400)}${lang === "en" ? "d" : "j"}`;
+}
+
+const langQ = lang === "en" ? "?lang=en" : "";
+---
+
+<Base title="Home">
+  <div class="page">
+
+    <!-- Big Alert -->
+    {bigAlerts.length > 0 && (
+      <div class="big-alert">
+        <div class="big-alert-icon">🚨</div>
+        <div class="big-alert-content">
+          <div class="big-alert-label">
+            CRITICAL ALERT — {bigAlerts.length} {bigAlerts.length > 1 ? (lang === "en" ? "active threats" : "menaces actives") : (lang === "en" ? "active threat" : "menace active")}
+          </div>
+          {bigAlerts.slice(0, 3).map((a) => (
+            <div class="big-alert-item">
+              {a.is_cisa_kev && <span class="badge badge-red">CISA KEV</span>}
+              {a.cvss_score && a.cvss_score >= 9.8 && <span class="badge badge-orange">CVSS {a.cvss_score}</span>}
+              <a href={a.url} target="_blank" rel="noopener" class="big-alert-link">{a.title}</a>
+            </div>
+          ))}
+          {bigAlerts.length > 3 && (
+            <div style="font-size:0.78rem; color:#f87171; margin-top:0.25rem;">
+              +{bigAlerts.length - 3} {lang === "en" ? "more" : "autres"} — <a href={`/security-news${langQ}`} style="color:#f87171;">{lang === "en" ? "View all alerts →" : "Voir toutes les alertes →"}</a>
+            </div>
+          )}
+        </div>
+      </div>
+    )}
+
+    <!-- Hero -->
+    <section class="hero">
+      <div class="hero-glow"></div>
+      <div class="hero-inner">
+        <img src="/nemea-logo.png" alt="CNEMEA" class="hero-logo" />
+        <h1 class="hero-title">{h.hero_title[lang]}</h1>
+        <p class="hero-sub">{h.hero_sub[lang]}</p>
+        <div class="hero-actions">
+          <a href={`/security-news${langQ}`} class="btn-primary">{h.cta_news[lang]}</a>
+          <a href={`/profiles${langQ}`} class="btn-outline">{h.cta_profiles[lang]}</a>
+        </div>
+      </div>
+    </section>
+
+    <!-- Recent Articles -->
+    <section class="section">
+      <div class="section-header">
+        <h2 class="section-title"><span class="dot dot-blue"></span>{h.recent[lang]}</h2>
+        <a href={`/security-news${langQ}`} class="section-more">{h.see_all[lang]}</a>
+      </div>
+
+      {dbError && <div class="empty-state">⚠️ {h.db_error[lang]}</div>}
+      {!dbError && recentArticles.length === 0 && <div class="empty-state">🔄 {h.loading[lang]}</div>}
+
+      <div class="articles-list">
+        {recentArticles.map((a) => (
+          <div class="article-card">
+            <div class="article-meta">
+              {a.is_cisa_kev && <span class="badge badge-red">CISA KEV</span>}
+              {a.cvss_score && a.cvss_score >= 9.0 && <span class="badge badge-orange">CVSS {a.cvss_score}</span>}
+              <span class="article-source">{a.source}</span>
+              <span class="article-time">{timeAgo(a.published_at)}</span>
+            </div>
+            <a href={a.url} target="_blank" rel="noopener" class="article-title">{a.title}</a>
+          </div>
+        ))}
+      </div>
+    </section>
+
+    <!-- Features -->
+    <section class="section">
+      <h2 class="section-title" style="margin-bottom:1.5rem;"><span class="dot dot-cyan"></span>{h.features[lang]}</h2>
+      <div class="features-grid">
+        {f.map((feat) => (
+          <div class="feature-card">
+            <div class="feature-icon">{feat.icon}</div>
+            <div class="feature-label">{lang === "en" ? feat.labelEn : feat.labelFr}</div>
+            <div class="feature-desc">{lang === "en" ? feat.descEn : feat.descFr}</div>
+          </div>
+        ))}
+      </div>
+    </section>
+
+  </div>
+</Base>
+
+<style>
+  .page { max-width: 1100px; margin: 0 auto; padding: 1.5rem; }
+  .big-alert { background:#1a0a0b; border:1px solid #ef444466; border-left:3px solid #ef4444; border-radius:8px; padding:1rem 1.25rem; margin-bottom:2rem; display:flex; align-items:flex-start; gap:1rem; }
+  .big-alert-icon { font-size:1.25rem; flex-shrink:0; margin-top:2px; }
+  .big-alert-label { font-size:0.68rem; font-weight:700; color:#ef4444; text-transform:uppercase; letter-spacing:1.5px; margin-bottom:0.4rem; }
+  .big-alert-item { display:flex; align-items:center; gap:0.4rem; margin-bottom:0.25rem; flex-wrap:wrap; }
+  .big-alert-link { color:#fca5a5; font-size:0.87rem; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:700px; }
+  .badge { font-size:0.62rem; font-weight:700; padding:1px 6px; border-radius:3px; flex-shrink:0; text-transform:uppercase; }
+  .badge-red { background:#ef4444; color:#fff; }
+  .badge-orange { background:#f59e0b; color:#000; }
+  .hero { position:relative; text-align:center; padding:4rem 0 3rem; overflow:hidden; }
+  .hero-glow { position:absolute; top:50%; left:50%; transform:translate(-50%,-60%); width:600px; height:400px; background:radial-gradient(ellipse,#3b82f615 0%,transparent 70%); pointer-events:none; }
+  .hero-logo { width:80px; height:80px; object-fit:contain; margin-bottom:1rem; filter:drop-shadow(0 0 20px #60a5fa44); }
+  .hero-title { font-size:2.5rem; font-weight:800; background:linear-gradient(135deg,#60a5fa,#22d3ee); -webkit-background-clip:text; -webkit-text-fill-color:transparent; background-clip:text; margin-bottom:0.75rem; }
+  .hero-sub { color:#8899b4; font-size:1rem; line-height:1.7; max-width:500px; margin:0 auto 2rem; white-space:pre-line; }
+  .hero-actions { display:flex; gap:1rem; justify-content:center; flex-wrap:wrap; }
+  .btn-primary { background:linear-gradient(135deg,#3b82f6,#2563eb); color:#fff; padding:0.65rem 1.75rem; border-radius:8px; font-weight:600; font-size:0.92rem; box-shadow:0 4px 15px #3b82f640; transition:opacity .15s; }
+  .btn-primary:hover { opacity:0.9; color:#fff; }
+  .btn-outline { border:1px solid #1e2d47; color:#8899b4; padding:0.65rem 1.75rem; border-radius:8px; font-weight:500; font-size:0.92rem; transition:border-color .15s,color .15s; }
+  .btn-outline:hover { border-color:#3b82f6; color:#60a5fa; }
+  .section { margin-bottom:3rem; }
+  .section-header { display:flex; align-items:center; justify-content:space-between; margin-bottom:1.25rem; }
+  .section-title { font-size:0.85rem; font-weight:700; text-transform:uppercase; letter-spacing:1.5px; color:#8899b4; display:flex; align-items:center; gap:0.5rem; }
+  .section-more { font-size:0.82rem; color:#3b82f6; }
+  .section-more:hover { color:#60a5fa; }
+  .dot { width:8px; height:8px; border-radius:50%; flex-shrink:0; }
+  .dot-blue { background:#3b82f6; box-shadow:0 0 6px #3b82f6; }
+  .dot-cyan { background:#22d3ee; box-shadow:0 0 6px #22d3ee; }
+  .articles-list { display:flex; flex-direction:column; gap:0.6rem; }
+  .article-card { background:#0d1424; border:1px solid #1e2d47; border-radius:8px; padding:0.85rem 1.1rem; transition:border-color .15s; }
+  .article-card:hover { border-color:#2a3f60; }
+  .article-meta { display:flex; align-items:center; gap:0.4rem; margin-bottom:0.35rem; flex-wrap:wrap; }
+  .article-source { font-size:0.75rem; color:#8899b4; }
+  .article-time { font-size:0.72rem; color:#4d6280; margin-left:auto; flex-shrink:0; }
+  .article-title { font-size:0.9rem; font-weight:500; color:#c8d4e8; display:block; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .article-title:hover { color:#60a5fa; }
+  .empty-state { background:#0d1424; border:1px solid #1e2d47; border-radius:8px; padding:2rem; text-align:center; color:#8899b4; }
+  .features-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(200px,1fr)); gap:1rem; }
+  .feature-card { background:#0d1424; border:1px solid #1e2d47; border-radius:10px; padding:1.25rem; transition:border-color .15s,transform .15s; }
+  .feature-card:hover { border-color:#3b82f644; transform:translateY(-2px); }
+  .feature-icon { font-size:1.5rem; margin-bottom:0.5rem; }
+  .feature-label { font-size:0.92rem; font-weight:600; margin-bottom:0.25rem; }
+  .feature-desc { font-size:0.8rem; color:#8899b4; line-height:1.5; }
+</style>

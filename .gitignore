@@ -1,0 +1,16 @@
+# Deps
+node_modules/
+frontend/node_modules/
+worker/node_modules/
+
+# Build outputs
+frontend/dist/
+worker/dist/
+
+# Env (secrets)
+.env
+!.env.example
+
+# OS
+.DS_Store
+*.log

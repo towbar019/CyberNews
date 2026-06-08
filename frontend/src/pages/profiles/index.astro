@@ -1,0 +1,138 @@
+---
+import Base from "../../layouts/Base.astro";
+import { getProfiles } from "../../lib/db";
+
+let profiles: Awaited<ReturnType<typeof getProfiles>> = [];
+let dbError = false;
+
+try {
+  profiles = await getProfiles();
+} catch {
+  dbError = true;
+}
+
+const profileAccent: Record<string, string> = {
+  nemea: "#60a5fa",
+  axel:  "#22d3ee",
+};
+---
+
+<Base title="Profils">
+  <div class="page">
+    <div class="page-header">
+      <h1 class="page-title">Profils de veille</h1>
+      <p class="page-sub">Choisissez un profil pour accéder aux résumés AI personnalisés.</p>
+    </div>
+
+    {dbError && (
+      <div class="empty-state">⚠️ Base de données non disponible.</div>
+    )}
+
+    {!dbError && profiles.length === 0 && (
+      <div class="empty-state">🔄 Chargement des profils…</div>
+    )}
+
+    <div class="profiles-grid">
+      {profiles.map((p) => {
+        const accent = profileAccent[p.name.toLowerCase()] ?? "#60a5fa";
+        const slug = p.name.toLowerCase();
+        return (
+          <div class="profile-card" style={`--card-accent: ${accent};`}>
+            <div class="profile-badge" style={`color: ${accent};`}>{p.name}</div>
+            <p class="profile-desc">{p.config.description ?? "Profil de veille cybersécurité"}</p>
+            <div class="profile-apps">
+              {(p.config.monitoredApps ?? []).slice(0, 8).map((app: string) => (
+                <span class="app-tag">{app}</span>
+              ))}
+              {(p.config.monitoredApps ?? []).length > 8 && (
+                <span class="app-tag app-tag-more">+{(p.config.monitoredApps ?? []).length - 8}</span>
+              )}
+            </div>
+            <div class="profile-actions">
+              <a href={`/security-news/${slug}`} class="btn-view" style={`background: ${accent}22; border-color: ${accent}44; color: ${accent};`}>
+                Voir les news →
+              </a>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  </div>
+</Base>
+
+<style>
+  .page { max-width: 1100px; margin: 0 auto; padding: 2rem 1.5rem; }
+  .page-header { margin-bottom: 2.5rem; }
+  .page-title { font-size: 1.8rem; font-weight: 700; margin-bottom: 0.4rem; }
+  .page-sub { color: #8899b4; font-size: 0.92rem; }
+
+  .profiles-grid {
+    display: grid;
+    gap: 1.25rem;
+    grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  }
+
+  .profile-card {
+    background: #0d1424;
+    border: 1px solid #1e2d47;
+    border-radius: 12px;
+    padding: 1.5rem;
+    transition: border-color .2s, transform .2s;
+  }
+  .profile-card:hover {
+    border-color: var(--card-accent, #3b82f6);
+    transform: translateY(-3px);
+  }
+
+  .profile-badge {
+    font-size: 0.7rem;
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: 2px;
+    margin-bottom: 0.75rem;
+  }
+
+  .profile-desc {
+    font-size: 0.88rem;
+    color: #c8d4e8;
+    line-height: 1.6;
+    margin-bottom: 1rem;
+  }
+
+  .profile-apps {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.3rem;
+    margin-bottom: 1.25rem;
+  }
+
+  .app-tag {
+    background: #111827;
+    border: 1px solid #1e2d47;
+    border-radius: 4px;
+    padding: 1px 8px;
+    font-size: 0.72rem;
+    color: #8899b4;
+  }
+  .app-tag-more { color: #4d6280; border-style: dashed; }
+
+  .btn-view {
+    display: inline-block;
+    padding: 6px 16px;
+    border-radius: 7px;
+    border: 1px solid;
+    font-size: 0.85rem;
+    font-weight: 600;
+    transition: opacity .15s;
+  }
+  .btn-view:hover { opacity: 0.8; }
+
+  .empty-state {
+    background: #0d1424;
+    border: 1px solid #1e2d47;
+    border-radius: 8px;
+    padding: 2rem;
+    text-align: center;
+    color: #8899b4;
+  }
+</style>
