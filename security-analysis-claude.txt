@@ -1,0 +1,262 @@
+SECURITY ANALYSIS — CyberNews Frontend
+Analyst: Claude (Anthropic)
+Date: 2026-06-09
+Scope: /frontend directory (Astro + React + PostgreSQL)
+================================================================================
+
+EXECUTIVE SUMMARY
+-----------------
+The frontend is a server-side-rendered Astro application that connects directly
+to a PostgreSQL database and renders cybersecurity intelligence. Six distinct
+security issues were identified, ranging from a high-severity XSS vector to
+medium-severity missing controls. There is no authentication layer — the
+application is entirely public.
+
+Severity ratings: CRITICAL / HIGH / MEDIUM / LOW / INFO
+
+================================================================================
+FINDING #1 — HIGH: XSS via Unsanitised Markdown-to-HTML Rendering
+File: src/pages/security-news/[profile].astro (line ~731-744)
+       src/components/PDFExportButton.tsx (line ~1831-1840)
+--------------------------------------------------------------------------------
+Both the page renderer and the PDF export component convert AI-generated
+Markdown to HTML via regex substitution and then inject it into the DOM without
+sanitising URLs.
+
+Vulnerable pattern in [profile].astro:
+  .replace(/\[(.+?)\]\((.+?)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>')
+
+  The captured group $2 is the raw URL from the Markdown content. If
+  summary.content_md (which is AI-generated and stored in the database)
+  contains a link like:
+
+    [click here](javascript:alert(document.cookie))
+
+  the output becomes:
+
+    <a href="javascript:alert(document.cookie)" target="_blank" rel="noopener">
+      click here
+    </a>
+
+  This is then injected via set:html={markdownToHtml(summary.content_md)},
+  bypassing Astro's built-in escaping and executing arbitrary JavaScript.
+
+The same pattern is reproduced in PDFExportButton.tsx, where the output is
+written directly via printWindow.document.write() — an even higher-risk sink.
+
+NOTE: The function does HTML-encode &, <, > at the top, but does NOT filter
+javascript: / data: URL schemes before constructing anchor hrefs.
+
+REMEDIATION:
+  1. After building the anchor tag, strip or reject javascript: and data: URLs:
+       const safeUrl = url.startsWith('javascript:') || url.startsWith('data:')
+         ? '#' : url;
+  2. Consider using a proper sanitiser library (e.g. DOMPurify on the client,
+     or a server-side equivalent) instead of manual regex conversion.
+  3. In PDFExportButton, set a Content Security Policy on the print window
+     to block inline script execution.
+
+================================================================================
+FINDING #2 — HIGH: Article URLs Rendered Without Scheme Validation
+Files: src/pages/index.astro (line ~483)
+       src/pages/security-news/[profile].astro (line ~896)
+       src/components/Timeline.tsx (line ~1737)
+--------------------------------------------------------------------------------
+Article URLs fetched from the database are rendered directly as href attributes
+across the application:
+
+  <a href={a.url} target="_blank" rel="noopener">
+
+If any RSS feed delivers — or a database injection introduces — an article with
+a javascript: URL, clicking the title will execute arbitrary JavaScript in the
+user's browser.
+
+The application processes real cybersecurity threat intelligence, which means
+attacker-controlled content (e.g. a malicious RSS feed) could craft URLs
+designed to exploit this.
+
+REMEDIATION:
+  Create a shared URL sanitiser used before every href render:
+    function safeUrl(url: string): string {
+      try {
+        const parsed = new URL(url);
+        return ['http:', 'https:'].includes(parsed.protocol) ? url : '#';
+      } catch {
+        return '#';
+      }
+    }
+  Apply this in all three files listed above.
+
+================================================================================
+FINDING #3 — HIGH: DATABASE_URL Potentially Exposed in Client Bundle
+File: frontend/astro.config.mjs (line ~1914-1916)
+--------------------------------------------------------------------------------
+The Vite configuration explicitly injects the database connection string into
+the build:
+
+  vite: {
+    define: {
+      "process.env.DATABASE_URL": JSON.stringify(process.env.DATABASE_URL),
+    },
+  },
+
+Vite's define option performs a literal string replacement at build time across
+ALL modules — including those bundled for the browser. If any code path that
+imports from db.ts is reachable from a client component (even indirectly), the
+full DATABASE_URL (including credentials and hostname) will be embedded in the
+JavaScript served to end users.
+
+While db.ts itself is server-only code in Astro, the risk is that a future
+developer adds a client-side import or the boundary is inadvertently breached.
+
+REMEDIATION:
+  Remove the vite.define block entirely. Astro server endpoints automatically
+  have access to process.env at runtime. The define block is not needed and
+  introduces unnecessary risk.
+
+  If a define is required for other reasons, scope it to server-side only:
+    vite: {
+      ssr: {
+        noExternal: ['pg'],
+      },
+    },
+
+================================================================================
+FINDING #4 — MEDIUM: No Authentication or Authorisation Layer
+Files: All pages and API routes
+--------------------------------------------------------------------------------
+The entire application is publicly accessible with no login, session, or
+access-control mechanism. This means:
+
+  - All cybersecurity intelligence (articles, summaries, CVE data, CISA KEV
+    flags) is readable by anyone who can reach the server.
+  - All operational metrics on the Reporting page (source URLs, article counts,
+    feed timing) are exposed publicly.
+  - Profile configurations, including lists of monitored applications, are
+    visible.
+
+For a security intelligence platform intended for internal use, this is a
+significant data exposure risk.
+
+REMEDIATION:
+  Add an authentication layer appropriate to the deployment environment:
+  - If hosted internally: network-level access control (firewall / VPN) as a
+    minimum; application-level auth preferred.
+  - If public-facing: implement session-based auth (e.g. Astro middleware with
+    cookie-based sessions, or an SSO/OAuth integration).
+
+================================================================================
+FINDING #5 — MEDIUM: Unvalidated URL Parameters Used in Page Logic
+File: src/pages/security-news/[profile].astro (lines ~657-660)
+--------------------------------------------------------------------------------
+Several query parameters are read from the URL and used directly:
+
+  const tab = (Astro.url.searchParams.get("tab") ?? "daily") as "daily" | "weekly" | "monthly";
+  const viewMode = (Astro.url.searchParams.get("view") ?? "summary") as "summary" | "detailed";
+  const dateParam = Astro.url.searchParams.get("date");
+  const selectedDate = dateParam ? new Date(dateParam + "T00:00:00Z") : null;
+
+TypeScript type assertions (as "daily" | ...) are compile-time checks only —
+they do NOT validate the value at runtime. A request such as:
+
+  /security-news/profile?tab=<script>alert(1)</script>
+
+will result in tab holding that string at runtime. While Astro's JSX rendering
+escapes the value when output, it is passed into database queries and logic
+without explicit validation, which could cause unexpected behaviour.
+
+The dateParam is passed directly to new Date() — an invalid date string will
+produce NaN-based arithmetic silently.
+
+REMEDIATION:
+  Add runtime validation:
+    const VALID_TABS = ['daily', 'weekly', 'monthly'] as const;
+    const tab = VALID_TABS.includes(rawTab as any) ? rawTab as typeof VALID_TABS[number] : 'daily';
+
+  For dateParam, validate it matches /^\d{4}-\d{2}-\d{2}$/ before use.
+
+================================================================================
+FINDING #6 — LOW: PostgreSQL Connection Pool Has No Timeout Configuration
+File: src/lib/db.ts (line ~9)
+--------------------------------------------------------------------------------
+The connection pool is initialised with only max: 5:
+
+  pool = new Pool({ connectionString: DATABASE_URL, max: 5 });
+
+The pg library supports additional timeout options that are not set:
+  - connectionTimeoutMillis (default: 0 = wait indefinitely)
+  - idleTimeoutMillis (default: 10000)
+  - statement_timeout (per-query timeout, not set)
+
+Under high load or a slow/unresponsive database, requests will queue
+indefinitely, potentially leading to resource exhaustion and denial of service.
+
+REMEDIATION:
+  pool = new Pool({
+    connectionString: DATABASE_URL,
+    max: 5,
+    connectionTimeoutMillis: 5000,   // fail fast if DB is unreachable
+    idleTimeoutMillis: 30000,
+    statement_timeout: 10000,        // kill queries running >10s
+  });
+
+================================================================================
+FINDING #7 — INFO: localStorage Used for Read-State Without Namespace Isolation
+File: src/components/Timeline.tsx (lines ~1627-1644)
+--------------------------------------------------------------------------------
+Article read/unread state is persisted to localStorage using the key:
+  secnews_read_${profileId}
+
+This is a numeric database ID. If profile IDs are predictable (1, 2, 3…), a
+page from a different origin that knows the key could attempt to read or
+overwrite this data. In practice, localStorage is origin-scoped, so this is
+only a risk if the app shares an origin with other untrusted content.
+
+Additionally, the IDs stored are database primary keys — if these are ever
+exposed to a different context, they reveal internal database structure.
+
+This is informational only; no immediate action is required unless the
+deployment shares an origin with other applications.
+
+================================================================================
+FINDING #8 — INFO: Server Bound to 0.0.0.0
+File: frontend/astro.config.mjs (line ~1910)
+--------------------------------------------------------------------------------
+  server: {
+    host: "0.0.0.0",
+    port: 3000,
+  },
+
+Binding to all interfaces is appropriate for containerised deployments where
+network-level controls (e.g. Docker port mapping, reverse proxy) handle
+exposure. However, if deployed directly on a host without a reverse proxy, the
+application will be reachable on all network interfaces.
+
+REMEDIATION:
+  Ensure a reverse proxy (nginx, Caddy, etc.) sits in front of the Astro server
+  and that port 3000 is not publicly exposed. If running without a proxy,
+  restrict to host: "127.0.0.1".
+
+================================================================================
+SUMMARY TABLE
+-------------
+#  | Severity | Title
+---|----------|------------------------------------------------------------
+1  | HIGH     | XSS via unsanitised Markdown link rendering
+2  | HIGH     | Article URLs rendered without scheme validation
+3  | HIGH     | DATABASE_URL potentially exposed in client bundle
+4  | MEDIUM   | No authentication or authorisation layer
+5  | MEDIUM   | Unvalidated URL parameters used in page logic
+6  | LOW      | PostgreSQL connection pool lacks timeout configuration
+7  | INFO     | localStorage read-state not namespace-isolated
+8  | INFO     | Server bound to 0.0.0.0
+
+RECOMMENDED PRIORITY ORDER:
+  1. Fix XSS in markdownToHtml and PDFExportButton (Finding #1)
+  2. Add URL scheme validation to all article link renders (Finding #2)
+  3. Remove DATABASE_URL from vite.define (Finding #3)
+  4. Add an authentication layer (Finding #4)
+  5. Add runtime validation for URL parameters (Finding #5)
+
+================================================================================
+END OF REPORT
