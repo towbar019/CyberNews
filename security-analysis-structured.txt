@@ -1,5 +1,22 @@
 Using the security-review skill
 
+Both analyses agree on the 5 core issues — XSS in markdown rendering, unsafe article URLs, DATABASE_URL exposure, no auth, and unvalidated URL params.
+The structured review adds:
+
+Missing HTTP security headers (CSP, X-Frame-Options) — a significant gap given the XSS findings
+Silent error handling / no security logging
+Dependency audit gap (npm audit not being run)
+A flag to review the worker component separately for SSRF
+
+The Claude analysis adds:
+
+PostgreSQL connection pool timeouts (operational resilience)
+localStorage isolation note (informational)
+
+The single highest-priority fix across both reports is the URL scheme sanitisation — a one-liner (safeUrl() function) that would close both the markdown XSS and the article href vectors simultaneously.
+
+
+
 STRUCTURED SECURITY REVIEW — CyberNews Frontend
 Methodology: OWASP Top 10 (2021) + Threat Modelling (STRIDE)
 Date: 2026-06-09
