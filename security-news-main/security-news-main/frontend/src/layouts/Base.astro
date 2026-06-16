@@ -1,0 +1,165 @@
+---
+import type { HTMLAttributes } from "astro/types";
+import { getLang } from "../lib/i18n";
+
+interface Props extends HTMLAttributes<"div"> {
+  title?: string;
+  description?: string;
+}
+
+const { title = "SecurityNews", description = "Veille cybersécurité personnalisée par profils" } = Astro.props;
+const lang = getLang(Astro.url);
+const currentPath = Astro.url.pathname;
+
+// Build lang switch URLs (keep current path, just toggle lang param)
+const frUrl = currentPath + "?lang=fr";
+const enUrl = currentPath + "?lang=en";
+
+const navLinks = [
+  { href: "/", labelFr: "Home",          labelEn: "Home" },
+  { href: "/security-news", labelFr: "SecurityNews", labelEn: "SecurityNews" },
+  { href: "/profiles",  labelFr: "Profils",      labelEn: "Profiles" },
+  { href: "/reporting", labelFr: "Reporting",    labelEn: "Reporting" },
+];
+
+function isActive(href: string): boolean {
+  if (href === "/") return currentPath === "/";
+  return currentPath.startsWith(href);
+}
+
+function navHref(href: string): string {
+  return lang === "en" ? `${href}?lang=en` : href;
+}
+---
+
+<!DOCTYPE html>
+<html lang={lang}>
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>{title} | SecurityNews — CNEMEA</title>
+  <meta name="description" content={description} />
+  <link rel="icon" href="/nemea-logo.png" type="image/png" />
+  <style>
+    :root {
+      --bg:        #0a0d12;
+      --surface:   #10141b;
+      --surface2:  #161b24;
+      --border:    #1d2430;
+      --border2:   #2a3344;
+      --text:      #e7ebf2;
+      --muted:     #8b95a7;
+      --faint:     #5b6577;
+      --accent:    #5b9cf8;
+      --accent-dim:#5b9cf81a;
+      --red:       #f0554d;
+      --orange:    #f59e0b;
+      --green:     #34d399;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html {
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      font-size: 15.5px;
+      -webkit-font-smoothing: antialiased;
+    }
+    body { min-height: 100vh; display: flex; flex-direction: column; background: var(--bg); }
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { color: var(--text); }
+    code { font-family: 'JetBrains Mono', ui-monospace, monospace; background: var(--surface2); padding: 2px 6px; border-radius: 4px; font-size: 0.85em; }
+
+    /* Navbar */
+    .navbar {
+      background: color-mix(in srgb, var(--bg) 85%, transparent);
+      backdrop-filter: blur(8px);
+      border-bottom: 1px solid var(--border);
+      padding: 0 2rem;
+      display: flex;
+      align-items: center;
+      gap: 2rem;
+      height: 60px;
+      position: sticky;
+      top: 0;
+      z-index: 100;
+    }
+    .navbar-brand {
+      display: flex;
+      align-items: center;
+      gap: 0.65rem;
+      text-decoration: none;
+      flex-shrink: 0;
+    }
+    .navbar-logo { width: 32px; height: 32px; object-fit: contain; }
+    .navbar-brand-text { font-size: 0.95rem; font-weight: 650; color: var(--text); letter-spacing: 0.08em; }
+    .navbar-nav { display: flex; align-items: center; gap: 0.25rem; flex: 1; }
+    .nav-link {
+      padding: 0.35rem 0.8rem;
+      border-radius: 6px;
+      font-size: 0.86rem;
+      font-weight: 480;
+      color: var(--muted);
+      transition: color .15s;
+    }
+    .nav-link:hover { color: var(--text); }
+    .nav-link.active { color: var(--text); font-weight: 600; }
+    .navbar-lang { margin-left: auto; display: flex; align-items: center; gap: 0.35rem; }
+    .lang-btn {
+      padding: 3px 9px;
+      border-radius: 5px;
+      border: 1px solid transparent;
+      background: transparent;
+      color: var(--faint);
+      font-size: 0.75rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: color .15s, border-color .15s;
+    }
+    .lang-btn:hover { color: var(--text); }
+    .lang-btn.active { border-color: var(--border2); color: var(--text); background: var(--surface2); }
+
+    main { flex: 1; }
+
+    .footer {
+      border-top: 1px solid var(--border);
+      padding: 1.5rem 2rem;
+      text-align: center;
+      color: var(--faint);
+      font-size: 0.76rem;
+      letter-spacing: 0.03em;
+    }
+  </style>
+</head>
+<body>
+  <nav class="navbar">
+    <a href={navHref("/")} class="navbar-brand">
+      <img src="/nemea-logo.png" alt="CNEMEA" class="navbar-logo" />
+      <span class="navbar-brand-text">CNEMEA</span>
+    </a>
+
+    <div class="navbar-nav">
+      {navLinks.map(link => (
+        <a
+          href={navHref(link.href)}
+          class={`nav-link${isActive(link.href) ? " active" : ""}`}
+        >
+          {lang === "en" ? link.labelEn : link.labelFr}
+        </a>
+      ))}
+    </div>
+
+    <div class="navbar-lang">
+      <a href={frUrl} class={`lang-btn${lang === "fr" ? " active" : ""}`}>FR</a>
+      <a href={enUrl} class={`lang-btn${lang === "en" ? " active" : ""}`}>EN</a>
+    </div>
+  </nav>
+
+  <main>
+    <slot />
+  </main>
+
+  <footer class="footer">
+    © {new Date().getFullYear()} CNEMEA — SecurityNews
+  </footer>
+</body>
+</html>

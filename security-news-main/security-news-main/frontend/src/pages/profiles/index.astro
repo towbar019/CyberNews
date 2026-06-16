@@ -1,0 +1,129 @@
+---
+import Base from "../../layouts/Base.astro";
+import { getProfiles } from "../../lib/db";
+
+let profiles: Awaited<ReturnType<typeof getProfiles>> = [];
+let dbError = false;
+
+try {
+  profiles = await getProfiles();
+} catch {
+  dbError = true;
+}
+---
+
+<Base title="Profils">
+  <div class="page">
+    <div class="page-header">
+      <h1 class="page-title">Profils de veille</h1>
+      <p class="page-sub">Choisissez un profil pour accéder aux résumés AI personnalisés.</p>
+    </div>
+
+    {dbError && (
+      <div class="empty-state">Base de données non disponible.</div>
+    )}
+
+    {!dbError && profiles.length === 0 && (
+      <div class="empty-state">Chargement des profils…</div>
+    )}
+
+    <div class="profiles-grid">
+      {profiles.map((p) => {
+        const slug = p.name.toLowerCase();
+        return (
+          <div class="profile-card">
+            <div class="profile-badge">{p.name}</div>
+            <p class="profile-desc">{p.config.description ?? "Profil de veille cybersécurité"}</p>
+            <div class="profile-apps">
+              {(p.config.monitoredApps ?? []).slice(0, 8).map((app: string) => (
+                <span class="app-tag">{app}</span>
+              ))}
+              {(p.config.monitoredApps ?? []).length > 8 && (
+                <span class="app-tag app-tag-more">+{(p.config.monitoredApps ?? []).length - 8}</span>
+              )}
+            </div>
+            <div class="profile-actions">
+              <a href={`/security-news/${slug}`} class="btn-view">
+                Voir les news →
+              </a>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  </div>
+</Base>
+
+<style>
+  .page { max-width: 980px; margin: 0 auto; padding: 2.5rem 1.5rem; }
+  .page-header { margin-bottom: 2rem; }
+  .page-title { font-size: 1.6rem; font-weight: 720; letter-spacing: -0.01em; margin-bottom: 0.35rem; }
+  .page-sub { color: var(--muted); font-size: 0.92rem; }
+
+  .profiles-grid {
+    display: grid;
+    gap: 0.9rem;
+    grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  }
+
+  .profile-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 1.4rem 1.5rem;
+    transition: border-color .15s;
+  }
+  .profile-card:hover { border-color: var(--border2); }
+
+  .profile-badge {
+    font-size: 1rem;
+    font-weight: 700;
+    color: var(--text);
+    letter-spacing: 0.02em;
+    margin-bottom: 0.5rem;
+  }
+
+  .profile-desc {
+    font-size: 0.85rem;
+    color: var(--muted);
+    line-height: 1.6;
+    margin-bottom: 1rem;
+  }
+
+  .profile-apps {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.3rem;
+    margin-bottom: 1.25rem;
+  }
+
+  .app-tag {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    padding: 1px 8px;
+    font-size: 0.72rem;
+    color: var(--muted);
+  }
+  .app-tag-more { color: var(--faint); border-style: dashed; }
+
+  .btn-view {
+    display: inline-block;
+    padding: 6px 16px;
+    border-radius: 7px;
+    border: 1px solid var(--border2);
+    color: var(--accent);
+    font-size: 0.84rem;
+    font-weight: 600;
+    transition: border-color .15s;
+  }
+  .btn-view:hover { border-color: var(--accent); color: var(--accent); }
+
+  .empty-state {
+    border: 1px dashed var(--border2);
+    border-radius: 8px;
+    padding: 2rem;
+    text-align: center;
+    color: var(--muted);
+  }
+</style>

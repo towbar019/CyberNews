@@ -1,0 +1,168 @@
+---
+import Base from "../layouts/Base.astro";
+import { getBigAlertArticles, getRecentArticles } from "../lib/db";
+import { getLang, translations } from "../lib/i18n";
+
+const lang = getLang(Astro.url);
+const h = translations.home;
+const f = translations.features;
+
+let bigAlerts: Awaited<ReturnType<typeof getBigAlertArticles>> = [];
+let recentArticles: Awaited<ReturnType<typeof getRecentArticles>> = [];
+let dbError = false;
+
+try {
+  [bigAlerts, recentArticles] = await Promise.all([
+    getBigAlertArticles(),
+    getRecentArticles(8),
+  ]);
+} catch {
+  dbError = true;
+}
+
+function timeAgo(date: Date): string {
+  const diff = Math.floor((Date.now() - new Date(date).getTime()) / 1000);
+  if (diff < 3600) return `${Math.floor(diff / 60)}m`;
+  if (diff < 86400) return `${Math.floor(diff / 3600)}h`;
+  return `${Math.floor(diff / 86400)}${lang === "en" ? "d" : "j"}`;
+}
+
+const langQ = lang === "en" ? "?lang=en" : "";
+---
+
+<Base title="Home">
+  <div class="page">
+
+    <!-- Big Alert — toujours en premier : info la plus importante -->
+    {bigAlerts.length > 0 && (
+      <div class="big-alert">
+        <div class="big-alert-label">
+          {bigAlerts.length} {bigAlerts.length > 1 ? (lang === "en" ? "active critical threats" : "menaces critiques actives") : (lang === "en" ? "active critical threat" : "menace critique active")}
+        </div>
+        {bigAlerts.slice(0, 3).map((a) => (
+          <div class="big-alert-item">
+            {a.is_cisa_kev && <span class="badge badge-red">KEV</span>}
+            {a.cvss_score && a.cvss_score >= 9.8 && <span class="badge badge-orange">CVSS {a.cvss_score}</span>}
+            <a href={a.url} target="_blank" rel="noopener" class="big-alert-link">{a.title}</a>
+          </div>
+        ))}
+        {bigAlerts.length > 3 && (
+          <a href={`/security-news${langQ}`} class="big-alert-more">
+            +{bigAlerts.length - 3} {lang === "en" ? "more →" : "autres →"}
+          </a>
+        )}
+      </div>
+    )}
+
+    <!-- Hero -->
+    <section class="hero">
+      <h1 class="hero-title">{h.hero_title[lang]}</h1>
+      <p class="hero-sub">{h.hero_sub[lang]}</p>
+      <div class="hero-actions">
+        <a href={`/security-news${langQ}`} class="btn-primary">{h.cta_news[lang]}</a>
+        <a href={`/profiles${langQ}`} class="btn-outline">{h.cta_profiles[lang]}</a>
+      </div>
+    </section>
+
+    <!-- Recent Articles -->
+    <section class="section">
+      <div class="section-header">
+        <h2 class="section-title">{h.recent[lang]}</h2>
+        <a href={`/security-news${langQ}`} class="section-more">{h.see_all[lang]}</a>
+      </div>
+
+      {dbError && <div class="empty-state">{h.db_error[lang]}</div>}
+      {!dbError && recentArticles.length === 0 && <div class="empty-state">{h.loading[lang]}</div>}
+
+      <div class="articles-list">
+        {recentArticles.map((a) => (
+          <div class="article-card">
+            <div class="article-line">
+              {a.is_cisa_kev && <span class="badge badge-red">KEV</span>}
+              {a.cvss_score && a.cvss_score >= 9.0 && <span class="badge badge-orange">CVSS {a.cvss_score}</span>}
+              <a href={a.url} target="_blank" rel="noopener" class="article-title">{a.title}</a>
+              <span class="article-source">{a.source}</span>
+              <span class="article-time">{timeAgo(a.published_at)}</span>
+            </div>
+          </div>
+        ))}
+      </div>
+    </section>
+
+    <!-- Features -->
+    <section class="section">
+      <div class="section-header">
+        <h2 class="section-title">{h.features[lang]}</h2>
+      </div>
+      <div class="features-grid">
+        {f.map((feat) => (
+          <div class="feature-card">
+            <div class="feature-icon">{feat.icon}</div>
+            <div class="feature-label">{lang === "en" ? feat.labelEn : feat.labelFr}</div>
+            <div class="feature-desc">{lang === "en" ? feat.descEn : feat.descFr}</div>
+          </div>
+        ))}
+      </div>
+    </section>
+
+  </div>
+</Base>
+
+<style>
+  .page { max-width: 980px; margin: 0 auto; padding: 2rem 1.5rem; }
+
+  /* Critical alert — sobre mais impossible à rater */
+  .big-alert {
+    border: 1px solid #f0554d40;
+    border-left: 3px solid var(--red);
+    border-radius: 8px;
+    background: #f0554d0a;
+    padding: 1rem 1.25rem;
+    margin-bottom: 2.5rem;
+  }
+  .big-alert-label { font-size: 0.72rem; font-weight: 700; color: var(--red); text-transform: uppercase; letter-spacing: 0.12em; margin-bottom: 0.6rem; }
+  .big-alert-item { display: flex; align-items: baseline; gap: 0.5rem; margin-bottom: 0.35rem; }
+  .big-alert-link { color: var(--text); font-size: 0.88rem; line-height: 1.45; }
+  .big-alert-link:hover { color: var(--red); }
+  .big-alert-more { display: inline-block; font-size: 0.78rem; color: var(--red); margin-top: 0.3rem; }
+
+  .badge { font-size: 0.62rem; font-weight: 700; padding: 1.5px 6px; border-radius: 4px; flex-shrink: 0; text-transform: uppercase; letter-spacing: 0.04em; align-self: center; }
+  .badge-red { background: var(--red); color: #fff; }
+  .badge-orange { border: 1px solid var(--orange); color: var(--orange); }
+
+  /* Hero — compact, typographique */
+  .hero { padding: 3.5rem 0 3rem; max-width: 620px; }
+  .hero-title { font-size: 2.1rem; font-weight: 750; letter-spacing: -0.02em; line-height: 1.15; margin-bottom: 0.9rem; color: var(--text); }
+  .hero-sub { color: var(--muted); font-size: 0.98rem; line-height: 1.7; margin-bottom: 1.75rem; white-space: pre-line; }
+  .hero-actions { display: flex; gap: 0.75rem; flex-wrap: wrap; }
+  .btn-primary { background: var(--accent); color: #0a0d12; padding: 0.6rem 1.4rem; border-radius: 8px; font-weight: 600; font-size: 0.88rem; transition: opacity .15s; }
+  .btn-primary:hover { opacity: 0.85; color: #0a0d12; }
+  .btn-outline { border: 1px solid var(--border2); color: var(--muted); padding: 0.6rem 1.4rem; border-radius: 8px; font-weight: 500; font-size: 0.88rem; transition: border-color .15s, color .15s; }
+  .btn-outline:hover { border-color: var(--accent); color: var(--text); }
+
+  /* Sections */
+  .section { margin-bottom: 3.5rem; }
+  .section-header { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 1.1rem; }
+  .section-title { font-size: 0.78rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.14em; color: var(--faint); }
+  .section-more { font-size: 0.82rem; color: var(--accent); }
+
+  /* Articles — liste dense, une ligne par article */
+  .articles-list { display: flex; flex-direction: column; }
+  .article-card { padding: 0.7rem 0.25rem; border-bottom: 1px solid var(--border); transition: background .15s; }
+  .article-card:hover { background: var(--surface); }
+  .article-line { display: flex; align-items: baseline; gap: 0.55rem; }
+  .article-title { font-size: 0.89rem; font-weight: 480; color: var(--text); flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .article-title:hover { color: var(--accent); }
+  .article-source { font-size: 0.72rem; color: var(--faint); flex-shrink: 0; }
+  .article-time { font-size: 0.72rem; color: var(--faint); flex-shrink: 0; width: 30px; text-align: right; }
+
+  .empty-state { border: 1px dashed var(--border2); border-radius: 8px; padding: 2rem; text-align: center; color: var(--muted); font-size: 0.88rem; }
+
+  /* Features */
+  .features-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 0.85rem; }
+  .feature-card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 1.15rem 1.25rem; transition: border-color .15s; }
+  .feature-card:hover { border-color: var(--border2); }
+  .feature-icon { font-size: 1.15rem; margin-bottom: 0.55rem; opacity: 0.85; }
+  .feature-label { font-size: 0.88rem; font-weight: 600; margin-bottom: 0.3rem; color: var(--text); }
+  .feature-desc { font-size: 0.78rem; color: var(--muted); line-height: 1.55; }
+</style>
