@@ -11,9 +11,7 @@ COPY src/ ./src/
 COPY public/ ./public/
 
 # Build args for env vars needed at build time
-ARG DATABASE_URL
 ARG PUBLIC_API_URL
-ENV DATABASE_URL=$DATABASE_URL
 ENV PUBLIC_API_URL=$PUBLIC_API_URL
 
 RUN npm run build

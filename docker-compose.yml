@@ -47,7 +47,6 @@ services:
       context: ./frontend
       dockerfile: Dockerfile
       args:
-        DATABASE_URL: ${DATABASE_URL}
         PUBLIC_API_URL: ${PUBLIC_API_URL:-http://localhost:3000}
     restart: unless-stopped
     ports:

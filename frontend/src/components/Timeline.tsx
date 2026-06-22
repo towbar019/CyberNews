@@ -1,5 +1,6 @@
 "use client";
 import { useEffect, useState } from "react";
+import { safeUrl } from "../lib/security";
 
 interface Article {
   id: number;
@@ -132,7 +133,7 @@ export default function Timeline({ articles, profileId }: Props) {
                       )}
                       <span style={{ fontSize: "0.73rem", color: "#8b949e" }}>{a.source}</span>
                     </div>
-                    <a href={a.url} target="_blank" rel="noopener" style={{ color: isRead ? "#8b949e" : "#e6edf3", fontWeight: 500, fontSize: "0.9rem", display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const, textDecoration: "none" }}>
+                    <a href={safeUrl(a.url)} target="_blank" rel="noopener" style={{ color: isRead ? "#8b949e" : "#e6edf3", fontWeight: 500, fontSize: "0.9rem", display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const, textDecoration: "none" }}>
                       {a.title}
                     </a>
                   </div>

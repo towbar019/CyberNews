@@ -6,7 +6,12 @@ export function getPool(): Pool {
   if (!pool) {
     const DATABASE_URL = process.env.DATABASE_URL;
     if (!DATABASE_URL) throw new Error("DATABASE_URL is required");
-    pool = new Pool({ connectionString: DATABASE_URL, max: 5 });
+    pool = new Pool({
+      connectionString: DATABASE_URL,
+      max: 5,
+      connectionTimeoutMillis: 5000,
+      idleTimeoutMillis: 30000,
+    });
   }
   return pool;
 }

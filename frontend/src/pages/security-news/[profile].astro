@@ -13,12 +13,19 @@ import {
   getBigAlertArticles,
 } from "../../lib/db";
 import { getLang, t } from "../../lib/i18n";
+import { safeUrl } from "../../lib/security";
+import { z } from "zod";
+
+const tabSchema = z.enum(["daily", "weekly", "monthly"]);
+const viewSchema = z.enum(["summary", "detailed"]);
+const dateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
 
 const { profile: profileSlug } = Astro.params;
 const lang = getLang(Astro.url);
-const tab = (Astro.url.searchParams.get("tab") ?? "daily") as "daily" | "weekly" | "monthly";
-const viewMode = (Astro.url.searchParams.get("view") ?? "summary") as "summary" | "detailed";
-const dateParam = Astro.url.searchParams.get("date");
+const tab = tabSchema.catch("daily").parse(Astro.url.searchParams.get("tab") ?? "daily");
+const viewMode = viewSchema.catch("summary").parse(Astro.url.searchParams.get("view") ?? "summary");
+const rawDateParam = Astro.url.searchParams.get("date");
+const dateParam = rawDateParam && dateSchema.safeParse(rawDateParam).success ? rawDateParam : null;
 const selectedDate = dateParam ? new Date(dateParam + "T00:00:00Z") : null;
 
 let profile = null;
@@ -99,7 +106,7 @@ function markdownToHtml(md: string): string {
     .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
     .replace(/\*(.+?)\*/g, "<em>$1</em>")
     .replace(/`(.+?)`/g, "<code>$1</code>")
-    .replace(/\[(.+?)\]\((.+?)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>')
+    .replace(/\[(.+?)\]\((.+?)\)/g, (_m, text, href) => `<a href="${safeUrl(href)}" target="_blank" rel="noopener">${text}</a>`)
     .replace(/^---$/gm, "<hr/>")
     .replace(/^- (.+)$/gm, "<li>$1</li>")
     .replace(/\n\n/g, "</p><p>");
@@ -255,7 +262,7 @@ const profileAccent = profile?.name.toLowerCase() === "axel" ? "#22d3ee" : "#60a
                         )}
                         <span class="article-date">{new Date(a.published_at).toLocaleDateString("fr-FR")}</span>
                       </div>
-                      <a href={a.url} target="_blank" rel="noopener" class="article-title">{a.title}</a>
+                      <a href={safeUrl(a.url)} target="_blank" rel="noopener" class="article-title">{a.title}</a>
                       {a.content && (
                         <p class="article-snippet">{a.content.slice(0, 200)}{a.content.length > 200 ? "…" : ""}</p>
                       )}

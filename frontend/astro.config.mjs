@@ -12,9 +12,4 @@ export default defineConfig({
     host: "0.0.0.0",
     port: 3000,
   },
-  vite: {
-    define: {
-      "process.env.DATABASE_URL": JSON.stringify(process.env.DATABASE_URL),
-    },
-  },
 });

@@ -2,6 +2,7 @@
 import Base from "../layouts/Base.astro";
 import { getBigAlertArticles, getRecentArticles } from "../lib/db";
 import { getLang, translations } from "../lib/i18n";
+import { safeUrl } from "../lib/security";
 
 const lang = getLang(Astro.url);
 const h = translations.home;
@@ -16,7 +17,8 @@ try {
     getBigAlertArticles(),
     getRecentArticles(8),
   ]);
-} catch {
+} catch (e) {
+  console.error(e);
   dbError = true;
 }
 
@@ -45,7 +47,7 @@ const langQ = lang === "en" ? "?lang=en" : "";
             <div class="big-alert-item">
               {a.is_cisa_kev && <span class="badge badge-red">CISA KEV</span>}
               {a.cvss_score && a.cvss_score >= 9.8 && <span class="badge badge-orange">CVSS {a.cvss_score}</span>}
-              <a href={a.url} target="_blank" rel="noopener" class="big-alert-link">{a.title}</a>
+              <a href={safeUrl(a.url)} target="_blank" rel="noopener" class="big-alert-link">{a.title}</a>
             </div>
           ))}
           {bigAlerts.length > 3 && (
@@ -90,7 +92,7 @@ const langQ = lang === "en" ? "?lang=en" : "";
               <span class="article-source">{a.source}</span>
               <span class="article-time">{timeAgo(a.published_at)}</span>
             </div>
-            <a href={a.url} target="_blank" rel="noopener" class="article-title">{a.title}</a>
+            <a href={safeUrl(a.url)} target="_blank" rel="noopener" class="article-title">{a.title}</a>
           </div>
         ))}
       </div>

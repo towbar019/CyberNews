@@ -16,8 +16,9 @@ export default function PDFExportButton({ profileName, content }: Props) {
       const printWindow = window.open("", "_blank");
       if (!printWindow) { alert("Autorisez les popups pour exporter en PDF."); return; }
 
-      // Convert markdown-ish to HTML for printing
+      // Convert markdown-ish to HTML for printing (escape first — content is AI-generated)
       const htmlContent = content
+        .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
         .replace(/^# (.+)$/gm, "<h1>$1</h1>")
         .replace(/^## (.+)$/gm, "<h2>$1</h2>")
         .replace(/^### (.+)$/gm, "<h3>$1</h3>")
@@ -28,11 +29,13 @@ export default function PDFExportButton({ profileName, content }: Props) {
         .replace(/\n\n/g, "<br/><br/>")
         .replace(/^---$/gm, "<hr/>");
 
+      const safeProfileName = profileName.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+
       printWindow.document.write(`
         <!DOCTYPE html>
         <html>
         <head>
-          <title>SecurityNews — ${profileName}</title>
+          <title>SecurityNews — ${safeProfileName}</title>
           <style>
             body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; max-width: 800px; margin: 2rem auto; color: #1a1a1a; line-height: 1.6; }
             h1 { font-size: 1.6rem; border-bottom: 2px solid #1f6feb; padding-bottom: 0.5rem; color: #1f6feb; }
@@ -47,7 +50,7 @@ export default function PDFExportButton({ profileName, content }: Props) {
         <body>
           <div style="display:flex; align-items:center; gap:0.5rem; margin-bottom:1rem;">
             <span style="font-size:1.5rem;">🐺</span>
-            <span style="font-weight:700; font-size:1.1rem;">SecurityNews — ${profileName}</span>
+            <span style="font-weight:700; font-size:1.1rem;">SecurityNews — ${safeProfileName}</span>
           </div>
           ${htmlContent}
           <div class="footer">
