@@ -1,0 +1,3 @@
+Fixed: XSS (markdown links + article hrefs sanitised to http/https, PDF export content escaped before document.write), DATABASE_URL leak (removed from vite.define + Docker build args), missing security headers + Basic Auth (new src/middleware.ts, gated by AUTH_USER/AUTH_PASS env vars — no-op till you set them), unvalidated URL params (zod), silent error swallow in index.astro, pg pool timeouts.
+
+Not fixed: npm audit shows a HIGH astro vuln needing major bump 5→7 (breaking) — left alone, flag for separate review.
