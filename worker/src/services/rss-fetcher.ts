@@ -95,7 +95,31 @@ async function fetchRssFeed(
 
   try {
     console.log(`  [fetching] ${sourceName}`);
-    const feed = await rssParser.parseURL(url);
+    let feed;
+    try {
+      feed = await rssParser.parseURL(url);
+    } catch (firstErr) {
+      // Fallback : certains feeds renvoient 403 au fetch direct (Dark Reading)
+      // ou du XML avec des '&' non échappés (Mandiant/Google Cloud).
+      // On refetch via axios avec headers browser complets, on assainit le XML,
+      // puis on parse la string.
+      console.warn(`  [fallback] ${sourceName}: direct parse failed, retrying via axios (${String(firstErr).slice(0, 80)})`);
+      const resp = await axios.get(url, {
+        timeout: 30000,
+        responseType: "text",
+        headers: {
+          "User-Agent": UA,
+          "Accept": "application/rss+xml, application/atom+xml, application/xml, text/xml, */*",
+          "Accept-Language": "en-US,en;q=0.9",
+        },
+      });
+      // Échappe les '&' nus qui ne font pas partie d'une entité valide
+      const sanitized = String(resp.data).replace(
+        /&(?!(?:amp|lt|gt|quot|apos|#\d+|#x[0-9a-fA-F]+);)/g,
+        "&amp;"
+      );
+      feed = await rssParser.parseString(sanitized);
+    }
     const articles: ParsedArticle[] = [];
 
     for (const item of feed.items) {
@@ -130,6 +154,30 @@ async function fetchRssFeed(
   }
 }
 
+// ── Retry helper (NVD renvoie régulièrement des 503) ───────────────────────
+
+async function withRetry<T>(
+  label: string,
+  fn: () => Promise<T>,
+  attempts = 3,
+  baseDelayMs = 5000
+): Promise<T> {
+  let lastErr: unknown;
+  for (let i = 1; i <= attempts; i++) {
+    try {
+      return await fn();
+    } catch (err) {
+      lastErr = err;
+      if (i < attempts) {
+        const delay = baseDelayMs * i;
+        console.warn(`  [retry] ${label}: attempt ${i}/${attempts} failed, retrying in ${delay / 1000}s`);
+        await new Promise((r) => setTimeout(r, delay));
+      }
+    }
+  }
+  throw lastErr;
+}
+
 // ── NVD API v2 ─────────────────────────────────────────────────────────────
 
 async function fetchNvdApiV2(): Promise<ParsedArticle[]> {
@@ -148,17 +196,20 @@ async function fetchNvdApiV2(): Promise<ParsedArticle[]> {
     const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
     const fmt = (d: Date) => d.toISOString().replace("Z", "+00:00").slice(0, 19) + "+00:00";
 
-    const response = await axios.get(
-      "https://services.nvd.nist.gov/rest/json/cves/2.0",
-      {
+    // Optional NVD API key (higher rate limits, fewer 503s) — set NVD_API_KEY in .env
+    const nvdHeaders: Record<string, string> = { "User-Agent": UA };
+    if (process.env.NVD_API_KEY) nvdHeaders["apiKey"] = process.env.NVD_API_KEY;
+
+    const response = await withRetry("NVD API v2", () =>
+      axios.get("https://services.nvd.nist.gov/rest/json/cves/2.0", {
         params: {
           pubStartDate: fmt(sevenDaysAgo),
           pubEndDate: fmt(now),
-          resultsPerPage: 100,
+          resultsPerPage: 200,
         },
         timeout: 60000,
-        headers: { "User-Agent": UA },
-      }
+        headers: nvdHeaders,
+      })
     );
 
     const feed = NvdV2FeedSchema.safeParse(response.data);
@@ -216,9 +267,11 @@ async function fetchCisaKev(): Promise<ParsedArticle[]> {
 
   try {
     console.log("  [fetching] CISA KEV");
-    const response = await axios.get(
-      "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json",
-      { timeout: 30000, headers: { "User-Agent": UA } }
+    const response = await withRetry("CISA KEV", () =>
+      axios.get(
+        "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json",
+        { timeout: 30000, headers: { "User-Agent": UA } }
+      )
     );
 
     const feedData = CisaKevFeedSchema.safeParse(response.data);
@@ -227,15 +280,18 @@ async function fetchCisaKev(): Promise<ParsedArticle[]> {
       return [];
     }
 
-    const thirtyDaysAgo = new Date();
-    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+    const ninetyDaysAgo = new Date();
+    ninetyDaysAgo.setDate(ninetyDaysAgo.getDate() - 90);
 
+    // FIX (2026-07-02) : l'URL doit être UNIQUE par CVE — avant, toutes les
+    // entrées KEV partageaient la même URL catalogue et la contrainte UNIQUE(url)
+    // droppait silencieusement toutes les nouvelles entrées (bug Unifi manqué).
     const articles: ParsedArticle[] = feedData.data.vulnerabilities
-      .filter((v) => new Date(v.dateAdded) > thirtyDaysAgo)
+      .filter((v) => new Date(v.dateAdded) > ninetyDaysAgo)
       .map((v) => ({
         source: "CISA KEV",
         title: `${v.cveID}: ${v.vulnerabilityName} (${v.vendorProject} ${v.product})`,
-        url: "https://www.cisa.gov/known-exploited-vulnerabilities-catalog",
+        url: `https://www.cisa.gov/known-exploited-vulnerabilities-catalog?cve=${encodeURIComponent(v.cveID)}`,
         publishedAt: new Date(v.dateAdded),
         content: `${v.shortDescription}\n\nRequired Action: ${v.requiredAction}\nDue Date: ${v.dueDate}`,
         cvssScore: null,
@@ -252,10 +308,26 @@ async function fetchCisaKev(): Promise<ParsedArticle[]> {
 
 // ── Scoring ────────────────────────────────────────────────────────────────
 
+type ProfileConfig = {
+  monitoredApps: string[];
+  keywords: string[];
+  sourceScope?: { mode: "include" | "exclude"; sources: string[] };
+};
+
+function isSourceInScope(sourceName: string, scope?: ProfileConfig["sourceScope"]): boolean {
+  if (!scope || !scope.sources?.length) return true;
+  const matches = scope.sources.some((prefix) => sourceName.startsWith(prefix));
+  return scope.mode === "include" ? matches : !matches;
+}
+
 function scoreArticleRelevance(
   article: ParsedArticle,
-  profileConfig: { monitoredApps: string[]; keywords: string[] }
+  profileConfig: ProfileConfig
 ): number {
+  // Scoping par profil : certaines sources sont réservées à certains profils
+  // (ex : GitHub releases → Nemea only ; Google News veille générale → Axel only)
+  if (!isSourceInScope(article.source, profileConfig.sourceScope)) return 0;
+
   const text = `${article.title} ${article.content || ""}`.toLowerCase();
   let score = 0;
 

@@ -1,0 +1,246 @@
+---
+import Base from "../../../layouts/Base.astro";
+import {
+  getProfileByName,
+  getCveArticlesForApp,
+  type CveArticle,
+} from "../../../lib/db";
+import { getLang } from "../../../lib/i18n";
+import { safeUrl, ProfileSlugSchema, AppNameSchema, YearSchema } from "../../../lib/security";
+
+const lang = getLang(Astro.url);
+const profileSlug = ProfileSlugSchema.parse(Astro.params.profile ?? "");
+const appParam = AppNameSchema.parse(Astro.url.searchParams.get("app") ?? "");
+const monthParam = /^\d{4}-\d{2}$/.test(Astro.url.searchParams.get("month") ?? "")
+  ? Astro.url.searchParams.get("month")
+  : null;
+const yearParam = YearSchema.parse(Astro.url.searchParams.get("year"));
+const sortParam = Astro.url.searchParams.get("sort") === "score" ? "score" : "date";
+
+let profile = null;
+let cves: CveArticle[] = [];
+let dbError = false;
+
+try {
+  profile = await getProfileByName(profileSlug);
+  if (profile && appParam) {
+    cves = await getCveArticlesForApp(appParam, {
+      month: monthParam,
+      year: monthParam ? null : yearParam,
+    });
+    if (sortParam === "score") {
+      cves = [...cves].sort((a, b) => (b.cvss_score ?? -1) - (a.cvss_score ?? -1));
+    }
+  }
+} catch (e) {
+  console.error("[cve-page] DB error:", e);
+  dbError = true;
+}
+
+if (!profile && !dbError) return Astro.redirect("/security-news");
+
+const monitoredApps: string[] = profile?.config.monitoredApps ?? [];
+
+// Years available for the filter (current + 2 previous)
+const currentYear = new Date().getFullYear();
+const years = [currentYear, currentYear - 1, currentYear - 2];
+
+function makeUrl(params: Record<string, string | null>): string {
+  const base = new URLSearchParams();
+  if (appParam) base.set("app", appParam);
+  if (monthParam) base.set("month", monthParam);
+  else if (yearParam) base.set("year", String(yearParam));
+  if (sortParam !== "date") base.set("sort", sortParam);
+  if (lang === "en") base.set("lang", "en");
+  for (const [k, v] of Object.entries(params)) {
+    if (v === null) base.delete(k);
+    else base.set(k, v);
+  }
+  return `/security-news/${profileSlug}/cve?${base.toString()}`;
+}
+
+const periodLabel = monthParam
+  ? new Date(monthParam + "-01T00:00:00Z").toLocaleDateString(lang === "en" ? "en-GB" : "fr-FR", { month: "long", year: "numeric" })
+  : yearParam
+  ? String(yearParam)
+  : lang === "en" ? "All time" : "Toutes périodes";
+
+const L = {
+  title: lang === "en" ? "CVE Explorer" : "Explorateur CVE",
+  pickApp: lang === "en" ? "Select an application to list its CVEs and vulnerabilities." : "Sélectionnez une application pour lister ses CVE et vulnérabilités.",
+  app: lang === "en" ? "Application" : "Application",
+  period: lang === "en" ? "Period" : "Période",
+  allYears: lang === "en" ? "All" : "Tout",
+  sortDate: lang === "en" ? "Date" : "Date",
+  sortScore: "Score",
+  sortBy: lang === "en" ? "Sort by" : "Trier par",
+  results: lang === "en" ? "results" : "résultats",
+  colDesc: lang === "en" ? "Vulnerability" : "Vulnérabilité",
+  colFix: "Fix",
+  colScore: "Score",
+  colDate: "Date",
+  noFix: lang === "en" ? "See advisory / update to latest version" : "Voir l'advisory / mettre à jour vers la dernière version",
+  noResults: lang === "en" ? "No CVE found for these filters." : "Aucune CVE trouvée pour ces filtres.",
+  dbError: lang === "en" ? "Database unavailable." : "Base de données non disponible.",
+  back: lang === "en" ? "Back to profile" : "Retour au profil",
+};
+---
+
+<Base title={`CVE — ${appParam || profile?.name || ""}`}>
+  <div class="page">
+    {dbError && <div class="empty-state">{L.dbError}</div>}
+
+    {!dbError && profile && (
+      <>
+        <div class="breadcrumb">
+          <a href={`/security-news${lang === "en" ? "?lang=en" : ""}`}>SecurityNews</a>
+          <span class="bc-sep">/</span>
+          <a href={`/security-news/${profileSlug}${lang === "en" ? "?lang=en" : ""}`}>{profile.name}</a>
+          <span class="bc-sep">/</span>
+          <span>CVE</span>
+        </div>
+
+        <div class="page-head">
+          <h1 class="page-title">{L.title}</h1>
+          {appParam && <p class="page-sub">{appParam} — {periodLabel}</p>}
+        </div>
+
+        <!-- Filters -->
+        <div class="filters">
+          <div class="filter-group">
+            <span class="filter-label">{L.app}</span>
+            <div class="filter-pills">
+              {monitoredApps.map((app: string) => (
+                <a
+                  href={makeUrl({ app })}
+                  class={`pill${appParam === app ? " pill-active" : ""}`}
+                >{app}</a>
+              ))}
+            </div>
+          </div>
+
+          <div class="filter-group">
+            <span class="filter-label">{L.period}</span>
+            <div class="filter-pills">
+              <a href={makeUrl({ year: null, month: null })} class={`pill${!yearParam && !monthParam ? " pill-active" : ""}`}>{L.allYears}</a>
+              {years.map((y) => (
+                <a href={makeUrl({ year: String(y), month: null })} class={`pill${yearParam === y && !monthParam ? " pill-active" : ""}`}>{y}</a>
+              ))}
+              {monthParam && <span class="pill pill-active">{periodLabel} ✕<a href={makeUrl({ month: null })} class="pill-clear"></a></span>}
+            </div>
+          </div>
+
+          <div class="filter-group">
+            <span class="filter-label">{L.sortBy}</span>
+            <div class="filter-pills">
+              <a href={makeUrl({ sort: null })} class={`pill${sortParam === "date" ? " pill-active" : ""}`}>{L.sortDate}</a>
+              <a href={makeUrl({ sort: "score" })} class={`pill${sortParam === "score" ? " pill-active" : ""}`}>{L.sortScore}</a>
+            </div>
+          </div>
+        </div>
+
+        {!appParam && <div class="empty-state">{L.pickApp}</div>}
+
+        {appParam && (
+          <div class="card">
+            <div class="card-header">
+              <div class="card-label">{appParam} — {cves.length} {L.results}</div>
+            </div>
+            {cves.length === 0 ? (
+              <div class="empty-summary">{L.noResults}</div>
+            ) : (
+              <div class="table-wrap">
+                <table class="cve-table">
+                  <thead>
+                    <tr>
+                      <th>{L.colDesc}</th>
+                      <th class="col-fix">{L.colFix}</th>
+                      <th class="col-score">{L.colScore}</th>
+                      <th class="col-date">{L.colDate}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {cves.map((c) => (
+                      <tr class={c.is_cisa_kev ? "row-kev" : ""}>
+                        <td>
+                          <a href={safeUrl(c.url)} target="_blank" rel="noopener noreferrer" class="cve-title">{c.title}</a>
+                          {c.content && <p class="cve-desc">{c.content.slice(0, 220)}{c.content.length > 220 ? "…" : ""}</p>}
+                          <span class="cve-src">{c.source}{c.is_cisa_kev && <span class="badge-kev">CISA KEV</span>}</span>
+                        </td>
+                        <td class="col-fix cve-fix">{c.fix ?? L.noFix}</td>
+                        <td class="col-score">
+                          {c.cvss_score
+                            ? <span class={`badge-cvss${c.cvss_score >= 9 ? " cvss-critical" : c.cvss_score >= 7 ? " cvss-high" : ""}`}>{c.cvss_score.toFixed(1)}</span>
+                            : <span class="score-na">—</span>}
+                        </td>
+                        <td class="col-date cve-date">{new Date(c.published_at).toLocaleDateString(lang === "en" ? "en-GB" : "fr-FR")}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        )}
+
+        <a href={`/security-news/${profileSlug}${lang === "en" ? "?lang=en" : ""}`} class="back-link">← {L.back}</a>
+      </>
+    )}
+  </div>
+</Base>
+
+<style>
+  .page { max-width: 1180px; margin: 0 auto; padding: 2.5rem 1.5rem; }
+  .breadcrumb { font-size: 0.76rem; color: var(--faint); margin-bottom: 0.9rem; display: flex; gap: 0.4rem; align-items: center; }
+  .breadcrumb a { color: var(--faint); }
+  .breadcrumb a:hover { color: var(--accent); }
+  .bc-sep { color: var(--border2); }
+  .page-head { margin-bottom: 1.5rem; }
+  .page-title { font-size: 1.6rem; font-weight: 720; letter-spacing: -0.01em; color: var(--text); }
+  .page-sub { color: var(--muted); font-size: 0.9rem; margin-top: 0.3rem; }
+
+  .filters { display: flex; flex-direction: column; gap: 0.75rem; margin-bottom: 1.5rem; padding: 1rem 1.25rem; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; }
+  .filter-group { display: flex; align-items: baseline; gap: 0.75rem; flex-wrap: wrap; }
+  .filter-label { font-size: 0.72rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.1em; color: var(--faint); width: 90px; flex-shrink: 0; }
+  .filter-pills { display: flex; flex-wrap: wrap; gap: 0.3rem; }
+  .pill {
+    padding: 2px 10px; font-size: 0.74rem; border-radius: 5px;
+    border: 1px solid var(--border); color: var(--muted); text-decoration: none;
+    transition: all .15s; background: var(--bg);
+  }
+  .pill:hover { border-color: var(--border2); color: var(--text); }
+  .pill-active { border-color: var(--accent); color: var(--accent); background: var(--accent-dim); font-weight: 600; }
+
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; margin-bottom: 1.5rem; }
+  .card-header { padding: 0.85rem 1.25rem; border-bottom: 1px solid var(--border); }
+  .card-label { font-size: 0.74rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.12em; color: var(--muted); }
+
+  .table-wrap { overflow-x: auto; }
+  .cve-table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+  .cve-table th {
+    text-align: left; padding: 0.7rem 1.25rem; font-size: 0.7rem; font-weight: 700;
+    text-transform: uppercase; letter-spacing: 0.08em; color: var(--faint);
+    border-bottom: 1px solid var(--border); white-space: nowrap;
+  }
+  .cve-table td { padding: 0.85rem 1.25rem; border-bottom: 1px solid var(--border); vertical-align: top; }
+  .cve-table tr:last-child td { border-bottom: none; }
+  .row-kev td:first-child { border-left: 2px solid var(--red); }
+  .col-fix { max-width: 260px; }
+  .col-score, .col-date { white-space: nowrap; }
+  .cve-title { color: var(--text); font-weight: 500; line-height: 1.45; text-decoration: none; }
+  .cve-title:hover { color: var(--accent); }
+  .cve-desc { font-size: 0.76rem; color: var(--faint); line-height: 1.55; margin: 0.3rem 0 0.35rem; }
+  .cve-src { font-size: 0.68rem; color: var(--faint); text-transform: uppercase; letter-spacing: 0.05em; display: flex; gap: 0.4rem; align-items: center; }
+  .cve-fix { font-size: 0.8rem; color: var(--muted); line-height: 1.55; }
+  .cve-date { font-size: 0.78rem; color: var(--muted); }
+  .badge-kev { background: var(--red); color: #fff; font-size: 0.6rem; font-weight: 700; padding: 1px 6px; border-radius: 4px; text-transform: uppercase; }
+  .badge-cvss { border: 1px solid var(--border2); color: var(--muted); font-size: 0.72rem; font-weight: 700; padding: 2px 8px; border-radius: 4px; }
+  .badge-cvss.cvss-critical { border-color: var(--red); color: var(--red); }
+  .badge-cvss.cvss-high { border-color: var(--orange); color: var(--orange); }
+  .score-na { color: var(--border2); }
+
+  .empty-summary { text-align: center; color: var(--muted); padding: 2.5rem 0; font-size: 0.88rem; }
+  .empty-state { border: 1px dashed var(--border2); border-radius: 8px; padding: 2rem; text-align: center; color: var(--muted); margin-bottom: 1.5rem; }
+  .back-link { font-size: 0.84rem; color: var(--accent); text-decoration: none; }
+  .back-link:hover { text-decoration: underline; }
+</style>

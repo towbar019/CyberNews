@@ -18,6 +18,13 @@ interface Props {
 }
 
 export default function Timeline({ articles, profileId }: Props) {
+
+function safeUrl(url: string): string {
+  try {
+    const p = new URL(url, "https://placeholder.invalid");
+    return ["http:", "https:"].includes(p.protocol) ? url : "#";
+  } catch { return "#"; }
+}
   const [readIds, setReadIds] = useState<Set<number>>(new Set());
   const [filter, setFilter] = useState<"all" | "unread" | "kev" | "critical">("all");
 
@@ -132,7 +139,7 @@ export default function Timeline({ articles, profileId }: Props) {
                       )}
                       <span style={{ fontSize: "0.73rem", color: "#8b949e" }}>{a.source}</span>
                     </div>
-                    <a href={a.url} target="_blank" rel="noopener" style={{ color: isRead ? "#8b949e" : "#e6edf3", fontWeight: 500, fontSize: "0.9rem", display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const, textDecoration: "none" }}>
+                    <a href={safeUrl(a.url)} target="_blank" rel="noopener noreferrer" style={{ color: isRead ? "#8b949e" : "#e6edf3", fontWeight: 500, fontSize: "0.9rem", display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const, textDecoration: "none" }}>
                       {a.title}
                     </a>
                   </div>
