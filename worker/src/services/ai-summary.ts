@@ -7,6 +7,14 @@ const anthropic = new Anthropic({
 
 type PeriodType = "daily" | "weekly" | "monthly";
 type Lang = "fr" | "en";
+type Mode = "concise" | "detailed";
+
+type ProfileConfig = {
+  description?: string;
+  monitoredApps: string[];
+  keywords: string[];
+  promptInstructions?: string;
+};
 
 interface ArticleRow {
   title: string;
@@ -66,11 +74,12 @@ function formatArticlesForPrompt(articles: ArticleRow[]): string {
 
 function buildPrompt(
   profileName: string,
-  profileConfig: { monitoredApps: string[]; keywords: string[] },
+  profileConfig: ProfileConfig,
   periodType: PeriodType,
   periodStart: Date,
   articles: ArticleRow[],
-  lang: Lang
+  lang: Lang,
+  mode: Mode = "concise"
 ): string {
   const periodLabelFr =
     periodType === "daily"
@@ -89,77 +98,69 @@ function buildPrompt(
   const articleText = formatArticlesForPrompt(articles);
   const monitoredApps = profileConfig.monitoredApps.join(", ");
 
-  if (lang === "fr") {
-    return `Tu es un analyste cybersécurité générant un briefing de sécurité ${periodType === "daily" ? "journalier" : periodType === "weekly" ? "hebdomadaire" : "mensuel"} pour le profil "${profileName}".
-
-Focus profil : CVE, vulnérabilités 0-day, problèmes de sécurité exploitables
+  // Instructions par profil (stockées en DB, cf. worker/src/db/seeds.ts et
+  // worker/RESEARCH.md). Si absentes → fallback générique.
+  const instructions =
+    profileConfig.promptInstructions ??
+    `Focus profil : CVE, vulnérabilités 0-day, problèmes de sécurité exploitables.
 Applications surveillées : ${monitoredApps || "Général"}
-Période : ${periodLabelFr}
-
-Articles à analyser :
-${articleText}
 
 Génère le briefing en Markdown avec cette structure :
-
-# Briefing Sécurité ${periodType === "daily" ? "du Jour" : periodType === "weekly" ? "Hebdomadaire" : "Mensuel"} — ${profileName}
-
 ## 🚨 Alertes Critiques (CVSS ≥ 9.0 ou CISA KEV)
-Vulnérabilités critiques avec détails techniques concis.
-
 ## 🔴 Sévérité Haute (CVSS 7.0-8.9)
-Principaux problèmes haute sévérité.
-
 ## 📊 Points Clés
-Actualités sécurité importantes et tendances pour les applications surveillées.
-
 ## 🛡️ Actions Recommandées
-Actions concrètes pour chaque item critique/haute sévérité.
+## 📝 Résumé`;
 
-## 📝 Résumé
-2-3 phrases de synthèse sur le paysage des menaces.
+  const langDirective =
+    lang === "fr"
+      ? "**Réponds entièrement en français.**"
+      : "**Respond entirely in English. Translate all section headings to English while keeping the exact same structure and emojis.**";
 
----
-*Généré automatiquement par SecurityNews AI.*
+  // Mode détaillé : mêmes sections que le concis, mais paragraphes réécrits et
+  // enrichis + sources par paragraphe. Feedback Axel 2026-07-03 : le détaillé ne
+  // doit PAS être une liste d'articles bruts — c'est le briefing concis
+  // développé (contexte entreprise/acteur, plus-value, impact sécurité).
+  const modeDirective =
+    mode === "detailed"
+      ? `
+MODE D'AFFICHAGE : DÉTAILLÉ
+- Garde EXACTEMENT la même structure de sections que le format imposé ci-dessus.
+- RÉÉCRIS chaque sujet en version développée : pour chaque acteur/entreprise/menace cité, ajoute le contexte (qui ils sont, leur rôle/plus-value dans l'écosystème), l'impact concret pour la sécurité, et pourquoi c'est important pour le lecteur.
+- Chaque paragraphe se termine par ses sources au format : *Sources : [Titre court](url), [Titre court](url)* — uniquement des URLs présentes dans les articles fournis.
+- Reste CONCRET : acteurs nommés, chiffres, dates, versions. Bannis les généralités abstraites ("paysage de menaces en évolution", "convergence des vecteurs"...). Chaque affirmation doit être rattachée à un fait sourcé.
+- Longueur : environ 2 à 3 fois le mode condensé.`
+      : `
+MODE D'AFFICHAGE : CONDENSÉ
+- Paragraphes courts, synthétiques. Va à l'essentiel.
+- Reste CONCRET : acteurs nommés, faits, chiffres. Bannis les généralités abstraites — chaque phrase de synthèse doit être ancrée dans un événement réel des articles.`;
 
-Reste technique, concis et orienté action. **Réponds entièrement en français.**`;
-  }
+  return `Tu es un analyste cybersécurité générant un briefing ${periodType === "daily" ? "journalier" : periodType === "weekly" ? "hebdomadaire" : "mensuel"} pour le profil "${profileName}".
 
-  // lang === "en"
-  return `You are a cybersecurity analyst generating a ${periodType} security briefing for the "${profileName}" profile.
+MÉTHODE DE TRAVAIL (important — prends le temps) :
+1. Lis TOUS les articles fournis ci-dessous avant de rédiger quoi que ce soit.
+2. Applique STRICTEMENT les instructions de traitement du profil — elles définissent le périmètre, le tri et le format. Ne dévie pas.
+3. Vérifie chaque affirmation contre les articles sources ; n'invente jamais de CVE, de score ou d'événement.
+4. Si aucun article ne correspond au périmètre du profil, dis-le explicitement dans les sections concernées.
 
-Profile focus: CVE, 0-day vulnerabilities, exploitable security issues
-Monitored applications: ${monitoredApps || "General"}
-Period: ${periodLabelEn}
+INSTRUCTIONS DE TRAITEMENT DU PROFIL "${profileName}" :
+${instructions}
+${modeDirective}
 
-Articles to analyze:
+Période : ${lang === "fr" ? periodLabelFr : periodLabelEn}
+
+Articles à analyser (${articles.length}) :
 ${articleText}
 
-Generate the briefing in Markdown with this structure:
+Commence par le titre : # Briefing ${periodType === "daily" ? "Journalier" : periodType === "weekly" ? "Hebdomadaire" : "Mensuel"} — ${profileName}
 
-# ${periodType === "daily" ? "Daily" : periodType === "weekly" ? "Weekly" : "Monthly"} Security Briefing — ${profileName}
+Termine par : ---
+*Généré automatiquement par SecurityNews AI.*
 
-## 🚨 Critical Alerts (CVSS ≥ 9.0 or CISA KEV)
-Critical vulnerabilities with concise technical details.
-
-## 🔴 High Severity (CVSS 7.0-8.9)
-Key high-severity findings.
-
-## 📊 Key Findings
-Important security news and trends for monitored applications.
-
-## 🛡️ Recommended Actions
-Concrete actions for each critical/high severity item.
-
-## 📝 Summary
-2-3 sentence executive summary of the period's threat landscape.
-
----
-*Automatically generated by SecurityNews AI.*
-
-Keep it technical, concise, and actionable. **Respond entirely in English.**`;
+${langDirective}`;
 }
 
-// Generate summary for a specific language
+// Generate summary for a specific language + mode
 async function generateSummaryForLang(
   profileId: number,
   periodType: PeriodType,
@@ -167,26 +168,27 @@ async function generateSummaryForLang(
   lang: Lang,
   articles: ArticleRow[],
   profileName: string,
-  profileConfig: { monitoredApps: string[]; keywords: string[] }
+  profileConfig: ProfileConfig,
+  mode: Mode = "concise"
 ): Promise<void> {
-  // Check if summary already exists for this lang
+  // Check if summary already exists for this lang+mode
   const existing = await pool.query(
-    `SELECT id FROM summaries WHERE profile_id = $1 AND period_type = $2 AND period_start = $3 AND lang = $4`,
-    [profileId, periodType, periodStart, lang]
+    `SELECT id FROM summaries WHERE profile_id = $1 AND period_type = $2 AND period_start = $3 AND lang = $4 AND mode = $5`,
+    [profileId, periodType, periodStart, lang, mode]
   );
 
   if (existing.rows.length > 0) {
-    console.log(`[AI] Summary (${lang}) already exists for profile ${profileId}, skipping.`);
+    console.log(`[AI] Summary (${lang}/${mode}) already exists for profile ${profileId}, skipping.`);
     return;
   }
 
-  const prompt = buildPrompt(profileName, profileConfig, periodType, periodStart, articles, lang);
+  const prompt = buildPrompt(profileName, profileConfig, periodType, periodStart, articles, lang, mode);
   const model = "claude-haiku-4-5";
 
   try {
     const response = await anthropic.messages.create({
       model,
-      max_tokens: periodType === "monthly" ? 4096 : 2048,
+      max_tokens: mode === "detailed" || periodType === "monthly" ? 4096 : 2048,
       messages: [{ role: "user", content: prompt }],
     });
 
@@ -194,15 +196,15 @@ async function generateSummaryForLang(
     if (content.type !== "text") throw new Error("Unexpected response type");
 
     await pool.query(
-      `INSERT INTO summaries (profile_id, period_type, period_start, content_md, lang)
-       VALUES ($1, $2, $3, $4, $5)
+      `INSERT INTO summaries (profile_id, period_type, period_start, content_md, lang, mode)
+       VALUES ($1, $2, $3, $4, $5, $6)
        ON CONFLICT DO NOTHING`,
-      [profileId, periodType, periodStart, content.text, lang]
+      [profileId, periodType, periodStart, content.text, lang, mode]
     );
 
-    console.log(`[AI] Summary (${lang}) stored (${content.text.length} chars).`);
+    console.log(`[AI] Summary (${lang}/${mode}) stored (${content.text.length} chars).`);
   } catch (err) {
-    console.error(`[AI] Failed to generate summary (${lang}): ${String(err)}`);
+    console.error(`[AI] Failed to generate summary (${lang}/${mode}): ${String(err)}`);
     throw err;
   }
 }
@@ -223,14 +225,17 @@ export async function generateSummary(
     console.error(`[AI] Profile ${profileId} not found`);
     return;
   }
-  const profile = profileResult.rows[0] as { name: string; config: { monitoredApps: string[]; keywords: string[] } };
+  const profile = profileResult.rows[0] as { name: string; config: ProfileConfig };
 
   const articles = await getArticlesForPeriod(profileId, periodType, periodStart);
   console.log(`[AI] Found ${articles.length} relevant articles.`);
 
-  // Generate FR first, then EN
-  await generateSummaryForLang(profileId, periodType, periodStart, "fr", articles, profile.name, profile.config);
-  await generateSummaryForLang(profileId, periodType, periodStart, "en", articles, profile.name, profile.config);
+  // FR + EN × concis + détaillé (le "détaillé" est le même briefing réécrit
+  // enrichi — feedback Axel 2026-07-03, PAS une liste d'articles bruts)
+  await generateSummaryForLang(profileId, periodType, periodStart, "fr", articles, profile.name, profile.config, "concise");
+  await generateSummaryForLang(profileId, periodType, periodStart, "en", articles, profile.name, profile.config, "concise");
+  await generateSummaryForLang(profileId, periodType, periodStart, "fr", articles, profile.name, profile.config, "detailed");
+  await generateSummaryForLang(profileId, periodType, periodStart, "en", articles, profile.name, profile.config, "detailed");
 }
 
 export async function generateAllSummaries(

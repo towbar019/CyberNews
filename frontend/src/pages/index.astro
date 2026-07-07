@@ -1,22 +1,24 @@
 ---
 import Base from "../layouts/Base.astro";
-import { getBigAlertArticles, getRecentArticles } from "../lib/db";
-import { getLang, translations } from "../lib/i18n";
+import { getBigAlertArticles, getHomeStats, getPublicNews } from "../lib/db";
+import { getLang } from "../lib/i18n";
+import { safeUrl } from "../lib/security";
 
 const lang = getLang(Astro.url);
-const h = translations.home;
-const f = translations.features;
 
 let bigAlerts: Awaited<ReturnType<typeof getBigAlertArticles>> = [];
-let recentArticles: Awaited<ReturnType<typeof getRecentArticles>> = [];
+let stats: Awaited<ReturnType<typeof getHomeStats>> | null = null;
+let publicNews: Awaited<ReturnType<typeof getPublicNews>> = [];
 let dbError = false;
 
 try {
-  [bigAlerts, recentArticles] = await Promise.all([
+  [bigAlerts, stats, publicNews] = await Promise.all([
     getBigAlertArticles(),
-    getRecentArticles(8),
+    getHomeStats(),
+    getPublicNews(8),
   ]);
-} catch {
+} catch (e) {
+  console.error("[home] DB error:", e);
   dbError = true;
 }
 
@@ -28,83 +30,154 @@ function timeAgo(date: Date): string {
 }
 
 const langQ = lang === "en" ? "?lang=en" : "";
+
+const L = {
+  tagline: lang === "en" ? "Threat intelligence, distilled." : "La veille cyber, distillée.",
+  heroSub: lang === "en"
+    ? "SecurityNews watches 30+ sources around the clock — CVE feeds, CISA KEV, vendor releases, global news — and turns the noise into profile-tailored AI briefings."
+    : "SecurityNews surveille 30+ sources en continu — flux CVE, CISA KEV, releases éditeurs, actu mondiale — et transforme le bruit en briefings AI taillés par profil.",
+  ctaNews: lang === "en" ? "Open briefings" : "Ouvrir les briefings",
+  ctaProfiles: lang === "en" ? "Explore profiles" : "Explorer les profils",
+  statusLabel: lang === "en" ? "System status" : "État du système",
+  s24h: lang === "en" ? "articles / 24h" : "articles / 24h",
+  s7d: lang === "en" ? "articles / 7 days" : "articles / 7 jours",
+  kev: lang === "en" ? "KEV entries / 30d" : "entrées KEV / 30j",
+  sources: lang === "en" ? "active sources" : "sources actives",
+  activity: lang === "en" ? "Ingestion — last 14 days" : "Ingestion — 14 derniers jours",
+  alertsTitle: lang === "en" ? "Active critical threats" : "Menaces critiques actives",
+  howTitle: lang === "en" ? "How it works" : "Comment ça marche",
+  dbError: lang === "en" ? "Database unavailable." : "Base de données non disponible.",
+  steps: [
+    {
+      n: "01",
+      t: lang === "en" ? "Collect" : "Collecte",
+      d: lang === "en"
+        ? "RSS, CISA KEV, NVD API, GitHub releases and news feeds are ingested every 2 hours."
+        : "RSS, CISA KEV, API NVD, releases GitHub et flux d'actu sont ingérés toutes les 2 heures.",
+    },
+    {
+      n: "02",
+      t: lang === "en" ? "Score" : "Scoring",
+      d: lang === "en"
+        ? "Every article is scored against each profile: monitored apps, keywords, KEV and CVSS severity."
+        : "Chaque article est scoré par profil : apps surveillées, mots-clés, KEV et sévérité CVSS.",
+    },
+    {
+      n: "03",
+      t: lang === "en" ? "Brief" : "Briefing",
+      d: lang === "en"
+        ? "Claude AI writes daily, weekly and monthly briefings following strict per-profile instructions."
+        : "Claude AI rédige des briefings daily, weekly et monthly selon des instructions strictes par profil.",
+    },
+  ],
+};
+
+const maxSpark = stats ? Math.max(...stats.sparkline.map((s) => s.count), 1) : 1;
 ---
 
 <Base title="Home">
-  <div class="page">
-
-    <!-- Big Alert -->
-    {bigAlerts.length > 0 && (
-      <div class="big-alert">
-        <div class="big-alert-icon">🚨</div>
-        <div class="big-alert-content">
-          <div class="big-alert-label">
-            CRITICAL ALERT — {bigAlerts.length} {bigAlerts.length > 1 ? (lang === "en" ? "active threats" : "menaces actives") : (lang === "en" ? "active threat" : "menace active")}
-          </div>
-          {bigAlerts.slice(0, 3).map((a) => (
-            <div class="big-alert-item">
-              {a.is_cisa_kev && <span class="badge badge-red">CISA KEV</span>}
-              {a.cvss_score && a.cvss_score >= 9.8 && <span class="badge badge-orange">CVSS {a.cvss_score}</span>}
-              <a href={a.url} target="_blank" rel="noopener" class="big-alert-link">{a.title}</a>
-            </div>
-          ))}
-          {bigAlerts.length > 3 && (
-            <div style="font-size:0.78rem; color:#f87171; margin-top:0.25rem;">
-              +{bigAlerts.length - 3} {lang === "en" ? "more" : "autres"} — <a href={`/security-news${langQ}`} style="color:#f87171;">{lang === "en" ? "View all alerts →" : "Voir toutes les alertes →"}</a>
-            </div>
-          )}
-        </div>
-      </div>
-    )}
+  <div class="home">
 
     <!-- Hero -->
     <section class="hero">
-      <div class="hero-glow"></div>
+      <div class="hero-glow" aria-hidden="true"></div>
       <div class="hero-inner">
-        <img src="/nemea-logo.png" alt="CNEMEA" class="hero-logo" />
-        <h1 class="hero-title">{h.hero_title[lang]}</h1>
-        <p class="hero-sub">{h.hero_sub[lang]}</p>
+        <div class="hero-badge">
+          <span class="pulse-dot"></span>
+          {lang === "en" ? "Monitoring live" : "Surveillance active"}
+        </div>
+        <h1 class="hero-title">{L.tagline}</h1>
+        <p class="hero-sub">{L.heroSub}</p>
         <div class="hero-actions">
-          <a href={`/security-news${langQ}`} class="btn-primary">{h.cta_news[lang]}</a>
-          <a href={`/profiles${langQ}`} class="btn-outline">{h.cta_profiles[lang]}</a>
+          <a href={`/security-news${langQ}`} class="btn-primary">{L.ctaNews} →</a>
+          <a href={`/profiles${langQ}`} class="btn-outline">{L.ctaProfiles}</a>
         </div>
       </div>
     </section>
 
-    <!-- Recent Articles -->
-    <section class="section">
-      <div class="section-header">
-        <h2 class="section-title"><span class="dot dot-blue"></span>{h.recent[lang]}</h2>
-        <a href={`/security-news${langQ}`} class="section-more">{h.see_all[lang]}</a>
-      </div>
+    {dbError && <div class="empty-state">{L.dbError}</div>}
 
-      {dbError && <div class="empty-state">⚠️ {h.db_error[lang]}</div>}
-      {!dbError && recentArticles.length === 0 && <div class="empty-state">🔄 {h.loading[lang]}</div>}
-
-      <div class="articles-list">
-        {recentArticles.map((a) => (
-          <div class="article-card">
-            <div class="article-meta">
-              {a.is_cisa_kev && <span class="badge badge-red">CISA KEV</span>}
-              {a.cvss_score && a.cvss_score >= 9.0 && <span class="badge badge-orange">CVSS {a.cvss_score}</span>}
-              <span class="article-source">{a.source}</span>
-              <span class="article-time">{timeAgo(a.published_at)}</span>
+    {!dbError && stats && (
+      <>
+        <!-- Critical alerts — only if any -->
+        {bigAlerts.length > 0 && (
+          <section class="alerts">
+            <div class="alerts-head">
+              <span class="alerts-title">⚠ {L.alertsTitle}</span>
+              <span class="alerts-sub">CISA KEV / CVSS ≥ 9.8</span>
             </div>
-            <a href={a.url} target="_blank" rel="noopener" class="article-title">{a.title}</a>
-          </div>
-        ))}
-      </div>
-    </section>
+            {bigAlerts.slice(0, 3).map((a) => (
+              <div class="alert-item">
+                {a.is_cisa_kev && <span class="badge badge-red">KEV</span>}
+                {a.cvss_score && a.cvss_score >= 9.8 && <span class="badge badge-orange">CVSS {a.cvss_score}</span>}
+                <a href={safeUrl(a.url)} target="_blank" rel="noopener noreferrer" class="alert-link">{a.title}</a>
+              </div>
+            ))}
+          </section>
+        )}
 
-    <!-- Features -->
-    <section class="section">
-      <h2 class="section-title" style="margin-bottom:1.5rem;"><span class="dot dot-cyan"></span>{h.features[lang]}</h2>
-      <div class="features-grid">
-        {f.map((feat) => (
-          <div class="feature-card">
-            <div class="feature-icon">{feat.icon}</div>
-            <div class="feature-label">{lang === "en" ? feat.labelEn : feat.labelFr}</div>
-            <div class="feature-desc">{lang === "en" ? feat.descEn : feat.descFr}</div>
+        <!-- Public news — lisible par n'importe qui -->
+        {publicNews.length > 0 && (
+          <section class="pubnews">
+            <div class="pubnews-head">
+              <span class="pubnews-title">{lang === "en" ? "In the news" : "Dans l'actu"}</span>
+              <span class="pubnews-sub">{lang === "en" ? "breaches, gov & policy — plain-language stories" : "breaches, étatique & réglementaire — actu grand public"}</span>
+            </div>
+            <div class="pubnews-list">
+              {publicNews.map((a) => (
+                <a href={safeUrl(a.url)} target="_blank" rel="noopener noreferrer" class="pubnews-item">
+                  <span class="pubnews-src">{a.source}</span>
+                  <span class="pubnews-headline">{a.title}</span>
+                  <span class="pubnews-time">{timeAgo(a.published_at)}</span>
+                </a>
+              ))}
+            </div>
+          </section>
+        )}
+
+        <!-- Stats band -->
+        <section class="stats">
+          <div class="stat">
+            <div class="stat-value">{stats.articles24h.toLocaleString(lang === "en" ? "en-GB" : "fr-FR")}</div>
+            <div class="stat-label">{L.s24h}</div>
+          </div>
+          <div class="stat">
+            <div class="stat-value">{stats.articles7d.toLocaleString(lang === "en" ? "en-GB" : "fr-FR")}</div>
+            <div class="stat-label">{L.s7d}</div>
+          </div>
+          <div class="stat">
+            <div class={`stat-value${stats.kev30d > 0 ? " stat-red" : ""}`}>{stats.kev30d}</div>
+            <div class="stat-label">{L.kev}</div>
+          </div>
+          <div class="stat">
+            <div class="stat-value">{stats.sourcesActive}</div>
+            <div class="stat-label">{L.sources}</div>
+          </div>
+        </section>
+
+        <!-- Activity sparkline -->
+        <section class="activity">
+          <div class="activity-label">{L.activity}</div>
+          <div class="spark">
+            {stats.sparkline.map((s) => (
+              <div class="spark-col" title={`${s.day} — ${s.count}`}>
+                <div class="spark-bar" style={`height: ${Math.max(Math.round((s.count / maxSpark) * 100), 4)}%`}></div>
+              </div>
+            ))}
+          </div>
+        </section>
+      </>
+    )}
+
+    <!-- How it works -->
+    <section class="how">
+      <h2 class="how-title">{L.howTitle}</h2>
+      <div class="how-grid">
+        {L.steps.map((s) => (
+          <div class="how-card">
+            <div class="how-n">{s.n}</div>
+            <div class="how-t">{s.t}</div>
+            <div class="how-d">{s.d}</div>
           </div>
         ))}
       </div>
@@ -114,46 +187,183 @@ const langQ = lang === "en" ? "?lang=en" : "";
 </Base>
 
 <style>
-  .page { max-width: 1100px; margin: 0 auto; padding: 1.5rem; }
-  .big-alert { background:#1a0a0b; border:1px solid #ef444466; border-left:3px solid #ef4444; border-radius:8px; padding:1rem 1.25rem; margin-bottom:2rem; display:flex; align-items:flex-start; gap:1rem; }
-  .big-alert-icon { font-size:1.25rem; flex-shrink:0; margin-top:2px; }
-  .big-alert-label { font-size:0.68rem; font-weight:700; color:#ef4444; text-transform:uppercase; letter-spacing:1.5px; margin-bottom:0.4rem; }
-  .big-alert-item { display:flex; align-items:center; gap:0.4rem; margin-bottom:0.25rem; flex-wrap:wrap; }
-  .big-alert-link { color:#fca5a5; font-size:0.87rem; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:700px; }
-  .badge { font-size:0.62rem; font-weight:700; padding:1px 6px; border-radius:3px; flex-shrink:0; text-transform:uppercase; }
-  .badge-red { background:#ef4444; color:#fff; }
-  .badge-orange { background:#f59e0b; color:#000; }
-  .hero { position:relative; text-align:center; padding:4rem 0 3rem; overflow:hidden; }
-  .hero-glow { position:absolute; top:50%; left:50%; transform:translate(-50%,-60%); width:600px; height:400px; background:radial-gradient(ellipse,#3b82f615 0%,transparent 70%); pointer-events:none; }
-  .hero-logo { width:80px; height:80px; object-fit:contain; margin-bottom:1rem; filter:drop-shadow(0 0 20px #60a5fa44); }
-  .hero-title { font-size:2.5rem; font-weight:800; background:linear-gradient(135deg,#60a5fa,#22d3ee); -webkit-background-clip:text; -webkit-text-fill-color:transparent; background-clip:text; margin-bottom:0.75rem; }
-  .hero-sub { color:#8899b4; font-size:1rem; line-height:1.7; max-width:500px; margin:0 auto 2rem; white-space:pre-line; }
-  .hero-actions { display:flex; gap:1rem; justify-content:center; flex-wrap:wrap; }
-  .btn-primary { background:linear-gradient(135deg,#3b82f6,#2563eb); color:#fff; padding:0.65rem 1.75rem; border-radius:8px; font-weight:600; font-size:0.92rem; box-shadow:0 4px 15px #3b82f640; transition:opacity .15s; }
-  .btn-primary:hover { opacity:0.9; color:#fff; }
-  .btn-outline { border:1px solid #1e2d47; color:#8899b4; padding:0.65rem 1.75rem; border-radius:8px; font-weight:500; font-size:0.92rem; transition:border-color .15s,color .15s; }
-  .btn-outline:hover { border-color:#3b82f6; color:#60a5fa; }
-  .section { margin-bottom:3rem; }
-  .section-header { display:flex; align-items:center; justify-content:space-between; margin-bottom:1.25rem; }
-  .section-title { font-size:0.85rem; font-weight:700; text-transform:uppercase; letter-spacing:1.5px; color:#8899b4; display:flex; align-items:center; gap:0.5rem; }
-  .section-more { font-size:0.82rem; color:#3b82f6; }
-  .section-more:hover { color:#60a5fa; }
-  .dot { width:8px; height:8px; border-radius:50%; flex-shrink:0; }
-  .dot-blue { background:#3b82f6; box-shadow:0 0 6px #3b82f6; }
-  .dot-cyan { background:#22d3ee; box-shadow:0 0 6px #22d3ee; }
-  .articles-list { display:flex; flex-direction:column; gap:0.6rem; }
-  .article-card { background:#0d1424; border:1px solid #1e2d47; border-radius:8px; padding:0.85rem 1.1rem; transition:border-color .15s; }
-  .article-card:hover { border-color:#2a3f60; }
-  .article-meta { display:flex; align-items:center; gap:0.4rem; margin-bottom:0.35rem; flex-wrap:wrap; }
-  .article-source { font-size:0.75rem; color:#8899b4; }
-  .article-time { font-size:0.72rem; color:#4d6280; margin-left:auto; flex-shrink:0; }
-  .article-title { font-size:0.9rem; font-weight:500; color:#c8d4e8; display:block; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-  .article-title:hover { color:#60a5fa; }
-  .empty-state { background:#0d1424; border:1px solid #1e2d47; border-radius:8px; padding:2rem; text-align:center; color:#8899b4; }
-  .features-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(200px,1fr)); gap:1rem; }
-  .feature-card { background:#0d1424; border:1px solid #1e2d47; border-radius:10px; padding:1.25rem; transition:border-color .15s,transform .15s; }
-  .feature-card:hover { border-color:#3b82f644; transform:translateY(-2px); }
-  .feature-icon { font-size:1.5rem; margin-bottom:0.5rem; }
-  .feature-label { font-size:0.92rem; font-weight:600; margin-bottom:0.25rem; }
-  .feature-desc { font-size:0.8rem; color:#8899b4; line-height:1.5; }
+  .home { max-width: 980px; margin: 0 auto; padding: 0 1.5rem 3rem; }
+
+  /* ── Hero ─────────────────────────────────────────── */
+  .hero { position: relative; padding: 5rem 0 4rem; overflow: hidden; }
+  .hero-glow {
+    position: absolute;
+    top: -120px; left: 50%;
+    transform: translateX(-50%);
+    width: 640px; height: 380px;
+    background: radial-gradient(ellipse at center, #5b9cf818 0%, transparent 65%);
+    pointer-events: none;
+    animation: glow-breathe 6s ease-in-out infinite;
+  }
+  @keyframes glow-breathe {
+    0%, 100% { opacity: 0.7; }
+    50% { opacity: 1; }
+  }
+  .hero-inner { position: relative; max-width: 640px; }
+  .hero-badge {
+    display: inline-flex; align-items: center; gap: 0.5rem;
+    font-size: 0.74rem; font-weight: 600; color: var(--green);
+    border: 1px solid #34d39930; background: #34d3990d;
+    padding: 4px 12px; border-radius: 100px;
+    margin-bottom: 1.4rem;
+    letter-spacing: 0.03em;
+  }
+  .pulse-dot {
+    width: 7px; height: 7px; border-radius: 50%; background: var(--green);
+    animation: pulse 2s ease-in-out infinite;
+  }
+  @keyframes pulse {
+    0%, 100% { box-shadow: 0 0 0 0 #34d39960; }
+    50% { box-shadow: 0 0 0 5px transparent; }
+  }
+  .hero-title {
+    font-size: 2.8rem; font-weight: 780; letter-spacing: -0.03em; line-height: 1.08;
+    margin-bottom: 1.1rem;
+    background: linear-gradient(120deg, var(--text) 40%, var(--accent) 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+    animation: fade-up 0.6s ease-out both;
+  }
+  .hero-sub {
+    color: var(--muted); font-size: 1.02rem; line-height: 1.75;
+    margin-bottom: 2rem;
+    animation: fade-up 0.6s ease-out 0.1s both;
+  }
+  .hero-actions { display: flex; gap: 0.75rem; flex-wrap: wrap; animation: fade-up 0.6s ease-out 0.2s both; }
+  @keyframes fade-up {
+    from { opacity: 0; transform: translateY(14px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  .btn-primary {
+    background: var(--accent); color: #0a0d12;
+    padding: 0.65rem 1.5rem; border-radius: 8px;
+    font-weight: 650; font-size: 0.9rem;
+    transition: transform .15s, box-shadow .15s;
+  }
+  .btn-primary:hover { color: #0a0d12; transform: translateY(-1px); box-shadow: 0 4px 20px #5b9cf840; }
+  .btn-outline {
+    border: 1px solid var(--border2); color: var(--muted);
+    padding: 0.65rem 1.5rem; border-radius: 8px;
+    font-weight: 500; font-size: 0.9rem;
+    transition: border-color .15s, color .15s;
+  }
+  .btn-outline:hover { border-color: var(--accent); color: var(--text); }
+
+  /* ── Alerts ───────────────────────────────────────── */
+  .alerts {
+    border: 1px solid #f0554d40;
+    border-left: 3px solid var(--red);
+    background: #f0554d0a;
+    border-radius: 8px;
+    padding: 1rem 1.25rem;
+    margin-bottom: 2rem;
+  }
+  .alerts-head { display: flex; align-items: baseline; gap: 0.75rem; margin-bottom: 0.6rem; }
+  .alerts-title { font-size: 0.78rem; font-weight: 700; color: var(--red); text-transform: uppercase; letter-spacing: 0.1em; }
+  .alerts-sub { font-size: 0.72rem; color: var(--faint); }
+  .alert-item { display: flex; align-items: baseline; gap: 0.5rem; margin-bottom: 0.35rem; }
+  .alert-link { color: var(--text); font-size: 0.88rem; line-height: 1.45; }
+  .alert-link:hover { color: var(--red); }
+  .badge { font-size: 0.62rem; font-weight: 700; padding: 1.5px 6px; border-radius: 4px; flex-shrink: 0; text-transform: uppercase; align-self: center; }
+  .badge-red { background: var(--red); color: #fff; }
+  .badge-orange { border: 1px solid var(--orange); color: var(--orange); }
+
+  /* ── Public news ──────────────────────────────────── */
+  .pubnews {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 1.1rem 1.4rem 0.6rem;
+    margin-bottom: 2rem;
+  }
+  .pubnews-head { display: flex; align-items: baseline; gap: 0.75rem; margin-bottom: 0.75rem; flex-wrap: wrap; }
+  .pubnews-title { font-size: 0.72rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.12em; color: var(--muted); }
+  .pubnews-sub { font-size: 0.72rem; color: var(--faint); }
+  .pubnews-list { display: flex; flex-direction: column; }
+  .pubnews-item {
+    display: flex; align-items: baseline; gap: 0.65rem;
+    padding: 0.55rem 0;
+    border-top: 1px solid var(--border);
+    text-decoration: none;
+    transition: background .15s;
+  }
+  .pubnews-item:hover .pubnews-headline { color: var(--accent); }
+  .pubnews-src { font-size: 0.68rem; color: var(--faint); font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; width: 120px; flex-shrink: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .pubnews-headline { font-size: 0.87rem; color: var(--text); flex: 1; min-width: 0; line-height: 1.45; transition: color .15s; }
+  .pubnews-time { font-size: 0.72rem; color: var(--faint); flex-shrink: 0; width: 32px; text-align: right; }
+
+  /* ── Stats band ───────────────────────────────────── */
+  .stats {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    gap: 0.85rem;
+    margin-bottom: 0.85rem;
+  }
+  .stat {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 1.25rem 1.4rem;
+    transition: border-color .2s, transform .2s;
+  }
+  .stat:hover { border-color: var(--border2); transform: translateY(-2px); }
+  .stat-value { font-size: 1.75rem; font-weight: 750; letter-spacing: -0.02em; color: var(--text); font-variant-numeric: tabular-nums; }
+  .stat-red { color: var(--red); }
+  .stat-label { font-size: 0.74rem; color: var(--faint); margin-top: 0.25rem; letter-spacing: 0.02em; }
+
+  /* ── Activity sparkline ───────────────────────────── */
+  .activity {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 1.1rem 1.4rem 1.25rem;
+    margin-bottom: 3rem;
+  }
+  .activity-label { font-size: 0.72rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.12em; color: var(--faint); margin-bottom: 0.9rem; }
+  .spark { display: flex; align-items: flex-end; gap: 4px; height: 56px; }
+  .spark-col { flex: 1; height: 100%; display: flex; align-items: flex-end; }
+  .spark-bar {
+    width: 100%; border-radius: 3px 3px 0 0;
+    background: linear-gradient(to top, #5b9cf866, var(--accent));
+    min-height: 3px;
+    transition: opacity .15s;
+    animation: bar-grow 0.7s ease-out both;
+    transform-origin: bottom;
+  }
+  .spark-col:hover .spark-bar { opacity: 0.65; }
+  @keyframes bar-grow { from { transform: scaleY(0); } to { transform: scaleY(1); } }
+
+  /* ── How it works ─────────────────────────────────── */
+  .how { margin-bottom: 1rem; }
+  .how-title { font-size: 0.78rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.14em; color: var(--faint); margin-bottom: 1.1rem; }
+  .how-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 0.85rem; }
+  .how-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 1.35rem 1.4rem;
+    position: relative;
+    overflow: hidden;
+    transition: border-color .2s;
+  }
+  .how-card:hover { border-color: var(--border2); }
+  .how-card::before {
+    content: "";
+    position: absolute; top: 0; left: 0; right: 0; height: 2px;
+    background: linear-gradient(90deg, var(--accent), transparent);
+    opacity: 0;
+    transition: opacity .2s;
+  }
+  .how-card:hover::before { opacity: 1; }
+  .how-n { font-size: 0.72rem; font-weight: 700; color: var(--accent); letter-spacing: 0.15em; margin-bottom: 0.6rem; font-variant-numeric: tabular-nums; }
+  .how-t { font-size: 0.95rem; font-weight: 650; color: var(--text); margin-bottom: 0.35rem; }
+  .how-d { font-size: 0.8rem; color: var(--muted); line-height: 1.65; }
+
+  .empty-state { border: 1px dashed var(--border2); border-radius: 8px; padding: 2rem; text-align: center; color: var(--muted); font-size: 0.88rem; margin-bottom: 2rem; }
 </style>

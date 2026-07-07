@@ -10,12 +10,8 @@ COPY tsconfig.json ./
 COPY src/ ./src/
 COPY public/ ./public/
 
-# Build args for env vars needed at build time
-ARG DATABASE_URL
-ARG PUBLIC_API_URL
-ENV DATABASE_URL=$DATABASE_URL
-ENV PUBLIC_API_URL=$PUBLIC_API_URL
-
+# SECURITY: DATABASE_URL n'est plus injecté au build (leak dans l'image +
+# vite.define supprimé). Il est fourni au runtime via env_file.
 RUN npm run build
 
 # Production

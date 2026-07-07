@@ -1,8 +1,8 @@
 ---
 import Base from "../layouts/Base.astro";
-import VolumeChart from "../components/VolumeChart";
 import { getReportingStats } from "../lib/db";
-import { getLang, t } from "../lib/i18n";
+import { getLang } from "../lib/i18n";
+import { safeUrl } from "../lib/security";
 
 const lang = getLang(Astro.url);
 
@@ -11,133 +11,290 @@ let dbError = false;
 
 try {
   stats = await getReportingStats();
-} catch {
+} catch (e) {
+  console.error("[reporting] DB error:", e);
   dbError = true;
 }
 
 function timeAgo(date: Date | null): string {
-  if (!date) return t("reporting", "never", lang);
+  if (!date) return lang === "en" ? "never" : "jamais";
   const diff = Math.floor((Date.now() - new Date(date).getTime()) / 1000);
   if (lang === "en") {
     if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
     if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
     return `${Math.floor(diff / 86400)}d ago`;
   }
-  if (diff < 3600) return `Il y a ${Math.floor(diff / 60)}m`;
-  if (diff < 86400) return `Il y a ${Math.floor(diff / 3600)}h`;
-  return `Il y a ${Math.floor(diff / 86400)}j`;
+  if (diff < 3600) return `il y a ${Math.floor(diff / 60)}m`;
+  if (diff < 86400) return `il y a ${Math.floor(diff / 3600)}h`;
+  return `il y a ${Math.floor(diff / 86400)}j`;
 }
+
+const L = {
+  title: "Reporting",
+  sub: lang === "en"
+    ? "Pipeline health, threat pulse and source performance — last 30 days."
+    : "Santé du pipeline, pouls de la menace et performance des sources — 30 derniers jours.",
+  health: lang === "en" ? "Pipeline health" : "Santé du pipeline",
+  lastFetch: lang === "en" ? "Last fetch" : "Dernier fetch",
+  lastSummary: lang === "en" ? "Last AI briefing" : "Dernier briefing AI",
+  staleSources: lang === "en" ? "stale sources (>6h)" : "sources en retard (>6h)",
+  ok: "OK",
+  threat: lang === "en" ? "Threat pulse — 30 days" : "Pouls de la menace — 30 jours",
+  kev: "CISA KEV",
+  critical: lang === "en" ? "Critical (CVSS ≥ 9)" : "Critiques (CVSS ≥ 9)",
+  high: lang === "en" ? "High (CVSS 7–8.9)" : "Hautes (CVSS 7–8.9)",
+  medium: lang === "en" ? "Medium (< 7)" : "Moyennes (< 7)",
+  volume: lang === "en" ? "Ingestion — 30 days" : "Ingestion — 30 jours",
+  totalArticles: lang === "en" ? "total articles" : "articles au total",
+  totalSummaries: lang === "en" ? "AI briefings" : "briefings AI",
+  topApps: lang === "en" ? "Most mentioned apps — 30 days" : "Apps les plus mentionnées — 30 jours",
+  kevRecent: lang === "en" ? "Latest CISA KEV entries" : "Dernières entrées CISA KEV",
+  sources: lang === "en" ? "Sources — activity over 30 days" : "Sources — activité sur 30 jours",
+  source: "Source",
+  articles30: lang === "en" ? "Articles (30d)" : "Articles (30j)",
+  lastFetchCol: lang === "en" ? "Last fetch" : "Dernier fetch",
+  quiet: lang === "en" ? "quiet" : "silencieuse",
+  dbError: lang === "en" ? "Database unavailable." : "Base de données non disponible.",
+};
+
+const maxVolume = stats ? Math.max(...stats.volume.map((v) => parseInt(v.count, 10)), 1) : 1;
+const maxApp = stats && stats.topApps.length > 0 ? stats.topApps[0].count : 1;
+const maxSrc = stats && stats.sources.length > 0 ? Math.max(parseInt(stats.sources[0].articles_30d, 10), 1) : 1;
+const sevTotal = stats ? Math.max(stats.severity.kev + stats.severity.critical + stats.severity.high + stats.severity.medium, 1) : 1;
+const fetchFresh = stats?.health.lastFetch && (Date.now() - new Date(stats.health.lastFetch).getTime()) < 3 * 3600 * 1000;
+const summaryFresh = stats?.health.lastSummary && (Date.now() - new Date(stats.health.lastSummary).getTime()) < 26 * 3600 * 1000;
 ---
 
 <Base title="Reporting">
   <div class="page">
     <div class="page-header">
-      <h1 class="page-title">{t("reporting","title",lang)}</h1>
-      <p class="page-sub">{t("reporting","sub",lang)}</p>
+      <h1 class="page-title">{L.title}</h1>
+      <p class="page-sub">{L.sub}</p>
     </div>
 
-    {dbError && <div class="empty-state">⚠️ {lang === "en" ? "Database unavailable." : "Base de données non disponible."}</div>}
+    {dbError && <div class="empty-state">{L.dbError}</div>}
 
     {stats && (
       <>
-        <!-- KPI Grid -->
-        <div class="kpi-grid">
-          {[
-            { label: t("reporting","total_art",lang), value: stats.totalArticles.toLocaleString(lang === "en" ? "en-US" : "fr-FR"), icon: "📰", color: "#60a5fa" },
-            { label: t("reporting","ai_summaries",lang), value: stats.totalSummaries.toLocaleString(lang === "en" ? "en-US" : "fr-FR"), icon: "🤖", color: "#22d3ee" },
-            { label: t("reporting","active_src",lang), value: stats.sources.length, icon: "📡", color: "#a78bfa" },
-            { label: t("reporting","art_30d",lang), value: stats.volume.reduce((s, v) => s + v.count, 0).toLocaleString(lang === "en" ? "en-US" : "fr-FR"), icon: "📈", color: "#22c55e" },
-          ].map((kpi) => (
-            <div class="kpi-card" style={`--kpi-color: ${kpi.color};`}>
-              <div class="kpi-icon">{kpi.icon}</div>
-              <div class="kpi-value" style={`color: ${kpi.color};`}>{kpi.value}</div>
-              <div class="kpi-label">{kpi.label}</div>
+        <!-- ═══ Pipeline health ═══ -->
+        <section class="health">
+          <div class={`health-item${fetchFresh ? "" : " health-warn"}`}>
+            <span class={`health-dot${fetchFresh ? " dot-ok" : " dot-warn"}`}></span>
+            <div>
+              <div class="health-label">{L.lastFetch}</div>
+              <div class="health-value">{timeAgo(stats.health.lastFetch)}</div>
             </div>
-          ))}
-        </div>
-
-        <!-- Volume chart -->
-        <div class="card">
-          <div class="card-header">
-            <div class="card-label">📈 {t("reporting","volume_title",lang)}</div>
           </div>
+          <div class={`health-item${summaryFresh ? "" : " health-warn"}`}>
+            <span class={`health-dot${summaryFresh ? " dot-ok" : " dot-warn"}`}></span>
+            <div>
+              <div class="health-label">{L.lastSummary}</div>
+              <div class="health-value">{timeAgo(stats.health.lastSummary)}</div>
+            </div>
+          </div>
+          <div class={`health-item${stats.health.staleSources === 0 ? "" : " health-warn"}`}>
+            <span class={`health-dot${stats.health.staleSources === 0 ? " dot-ok" : " dot-warn"}`}></span>
+            <div>
+              <div class="health-label">{L.staleSources}</div>
+              <div class="health-value">{stats.health.staleSources === 0 ? L.ok : stats.health.staleSources}</div>
+            </div>
+          </div>
+          <div class="health-item">
+            <div>
+              <div class="health-label">{L.totalArticles}</div>
+              <div class="health-value">{stats.totalArticles.toLocaleString(lang === "en" ? "en-GB" : "fr-FR")}</div>
+            </div>
+          </div>
+          <div class="health-item">
+            <div>
+              <div class="health-label">{L.totalSummaries}</div>
+              <div class="health-value">{stats.totalSummaries.toLocaleString(lang === "en" ? "en-GB" : "fr-FR")}</div>
+            </div>
+          </div>
+        </section>
+
+        <!-- ═══ Threat pulse ═══ -->
+        <section class="card">
+          <div class="card-header"><div class="card-label">{L.threat}</div></div>
           <div class="card-body">
-            <VolumeChart client:load volume={stats.volume} />
+            <div class="sev-bar">
+              {stats.severity.kev > 0 && <div class="sev-seg seg-kev" style={`flex: ${stats.severity.kev}`} title={`KEV: ${stats.severity.kev}`}></div>}
+              {stats.severity.critical > 0 && <div class="sev-seg seg-crit" style={`flex: ${stats.severity.critical}`} title={`Critical: ${stats.severity.critical}`}></div>}
+              {stats.severity.high > 0 && <div class="sev-seg seg-high" style={`flex: ${stats.severity.high}`} title={`High: ${stats.severity.high}`}></div>}
+              {stats.severity.medium > 0 && <div class="sev-seg seg-med" style={`flex: ${stats.severity.medium}`} title={`Medium: ${stats.severity.medium}`}></div>}
+            </div>
+            <div class="sev-legend">
+              <span class="sev-key"><span class="sev-swatch seg-kev"></span>{L.kev} <strong>{stats.severity.kev}</strong></span>
+              <span class="sev-key"><span class="sev-swatch seg-crit"></span>{L.critical} <strong>{stats.severity.critical}</strong></span>
+              <span class="sev-key"><span class="sev-swatch seg-high"></span>{L.high} <strong>{stats.severity.high}</strong></span>
+              <span class="sev-key"><span class="sev-swatch seg-med"></span>{L.medium} <strong>{stats.severity.medium}</strong></span>
+            </div>
           </div>
+        </section>
+
+        <div class="two-col">
+          <!-- ═══ Volume sparkbars ═══ -->
+          <section class="card">
+            <div class="card-header"><div class="card-label">{L.volume}</div></div>
+            <div class="card-body">
+              <div class="spark">
+                {stats.volume.map((v) => (
+                  <div class="spark-col" title={`${v.day} — ${v.count}`}>
+                    <div class="spark-bar" style={`height: ${Math.max(Math.round((parseInt(v.count, 10) / maxVolume) * 100), 4)}%`}></div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </section>
+
+          <!-- ═══ Top apps ═══ -->
+          <section class="card">
+            <div class="card-header"><div class="card-label">{L.topApps}</div></div>
+            <div class="card-body">
+              <div class="hbars">
+                {stats.topApps.map((a) => (
+                  <div class="hbar-row">
+                    <span class="hbar-name">{a.app}</span>
+                    <div class="hbar-track"><div class="hbar-fill" style={`width: ${Math.round((a.count / maxApp) * 100)}%`}></div></div>
+                    <span class="hbar-count">{a.count}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </section>
         </div>
 
-        <!-- Sources table -->
-        <div class="card">
-          <div class="card-header">
-            <div class="card-label">📡 {t("reporting","sources_title",lang)}</div>
+        <!-- ═══ Latest KEV ═══ -->
+        {stats.kevRecent.length > 0 && (
+          <section class="card">
+            <div class="card-header"><div class="card-label">{L.kevRecent}</div></div>
+            <div class="card-body kev-list">
+              {stats.kevRecent.map((k) => (
+                <a href={safeUrl(k.url)} target="_blank" rel="noopener noreferrer" class="kev-item">
+                  <span class="badge-kev">KEV</span>
+                  <span class="kev-title">{k.title}</span>
+                  <span class="kev-date">{new Date(k.published_at).toLocaleDateString(lang === "en" ? "en-GB" : "fr-FR")}</span>
+                </a>
+              ))}
+            </div>
+          </section>
+        )}
+
+        <!-- ═══ Sources ═══ -->
+        <section class="card">
+          <div class="card-header"><div class="card-label">{L.sources}</div></div>
+          <div class="card-body">
+            <div class="src-list">
+              {stats.sources.map((s) => {
+                const n = parseInt(s.articles_30d, 10);
+                return (
+                  <div class={`src-row${n === 0 ? " src-quiet" : ""}`}>
+                    <span class="src-name" title={s.url}>{s.name}</span>
+                    <div class="src-track">
+                      <div class="src-fill" style={`width: ${Math.max(Math.round((n / maxSrc) * 100), n > 0 ? 2 : 0)}%`}></div>
+                    </div>
+                    <span class="src-count">{n === 0 ? L.quiet : n.toLocaleString(lang === "en" ? "en-GB" : "fr-FR")}</span>
+                    <span class="src-fetch">{timeAgo(s.last_fetched)}</span>
+                  </div>
+                );
+              })}
+            </div>
           </div>
-          <div style="overflow-x: auto;">
-            <table class="table">
-              <thead>
-                <tr>
-                  <th>{t("reporting","source",lang)}</th>
-                  <th class="th-right">{t("reporting","articles",lang)}</th>
-                  <th class="th-right">{t("reporting","last_fetch",lang)}</th>
-                </tr>
-              </thead>
-              <tbody>
-                {stats.sources.map((s, i) => (
-                  <tr class={i < stats!.sources.length - 1 ? "tr-border" : ""}>
-                    <td>
-                      <div class="source-name">{s.name}</div>
-                      <div class="source-url">{s.url}</div>
-                    </td>
-                    <td class="td-right">
-                      <span class="count-badge">{s.article_count.toLocaleString(lang === "en" ? "en-US" : "fr-FR")}</span>
-                    </td>
-                    <td class="td-right source-time">{timeAgo(s.last_fetched)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
+        </section>
       </>
     )}
   </div>
 </Base>
 
 <style>
-  .page { max-width: 1100px; margin: 0 auto; padding: 2rem 1.5rem; display: flex; flex-direction: column; gap: 1.5rem; }
-  .page-header { }
-  .page-title { font-size: 1.8rem; font-weight: 700; margin-bottom: 0.4rem; }
-  .page-sub { color: #8899b4; }
+  .page { max-width: 1080px; margin: 0 auto; padding: 2.5rem 1.5rem; display: flex; flex-direction: column; gap: 1.25rem; }
+  .page-title { font-size: 1.6rem; font-weight: 720; letter-spacing: -0.01em; margin-bottom: 0.35rem; }
+  .page-sub { color: var(--muted); font-size: 0.92rem; }
 
-  .kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 1rem; }
-  .kpi-card {
-    background: #0d1424;
-    border: 1px solid #1e2d47;
-    border-radius: 10px;
-    padding: 1.25rem;
-    text-align: center;
-    transition: border-color .15s;
+  /* Health band */
+  .health {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+    gap: 0.85rem;
   }
-  .kpi-card:hover { border-color: var(--kpi-color, #3b82f6); }
-  .kpi-icon { font-size: 1.75rem; margin-bottom: 0.4rem; }
-  .kpi-value { font-size: 1.7rem; font-weight: 800; margin-bottom: 0.2rem; }
-  .kpi-label { font-size: 0.75rem; color: #8899b4; }
+  .health-item {
+    display: flex; align-items: center; gap: 0.7rem;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 1rem 1.2rem;
+    transition: border-color .2s, transform .2s;
+  }
+  .health-item:hover { border-color: var(--border2); transform: translateY(-2px); }
+  .health-item.health-warn { border-color: #f59e0b50; }
+  .health-dot { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; }
+  .dot-ok { background: var(--green); box-shadow: 0 0 6px var(--green); }
+  .dot-warn { background: var(--orange); box-shadow: 0 0 6px var(--orange); }
+  .health-label { font-size: 0.7rem; color: var(--faint); text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 2px; }
+  .health-value { font-size: 1.05rem; font-weight: 700; color: var(--text); font-variant-numeric: tabular-nums; }
 
-  .card { background: #0d1424; border: 1px solid #1e2d47; border-radius: 10px; overflow: hidden; }
-  .card-header { padding: 0.85rem 1.1rem; border-bottom: 1px solid #1e2d47; }
-  .card-label { font-size: 0.78rem; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; color: #8899b4; }
-  .card-body { padding: 1.1rem; }
+  /* Cards */
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+  .card-header { padding: 0.85rem 1.25rem; border-bottom: 1px solid var(--border); }
+  .card-label { font-size: 0.74rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.12em; color: var(--muted); }
+  .card-body { padding: 1.25rem 1.4rem; }
+  .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 1.25rem; }
+  @media (max-width: 820px) { .two-col { grid-template-columns: 1fr; } }
 
-  .table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
-  .table th { text-align: left; padding: 0.75rem 1.25rem; color: #8899b4; font-weight: 600; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.5px; }
-  .th-right { text-align: right; }
-  .tr-border td { border-bottom: 1px solid #1e2d47; }
-  .table td { padding: 0.75rem 1.25rem; }
+  /* Severity stacked bar */
+  .sev-bar { display: flex; height: 26px; border-radius: 6px; overflow: hidden; gap: 2px; margin-bottom: 0.9rem; }
+  .sev-seg { min-width: 6px; transition: opacity .15s; animation: grow-x 0.7s ease-out both; transform-origin: left; }
+  .sev-seg:hover { opacity: 0.75; }
+  @keyframes grow-x { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+  .seg-kev { background: var(--red); }
+  .seg-crit { background: #f97316; }
+  .seg-high { background: #eab308; }
+  .seg-med { background: var(--accent); opacity: 0.65; }
+  .sev-legend { display: flex; flex-wrap: wrap; gap: 1.1rem; }
+  .sev-key { font-size: 0.78rem; color: var(--muted); display: flex; align-items: center; gap: 0.4rem; }
+  .sev-key strong { color: var(--text); font-variant-numeric: tabular-nums; }
+  .sev-swatch { width: 10px; height: 10px; border-radius: 3px; display: inline-block; }
 
-  .source-name { font-weight: 500; margin-bottom: 2px; }
-  .source-url { font-size: 0.72rem; color: #4d6280; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 350px; }
-  .td-right { text-align: right; }
-  .count-badge { background: #111827; border: 1px solid #1e2d47; border-radius: 5px; padding: 2px 8px; font-size: 0.8rem; }
-  .source-time { font-size: 0.8rem; color: #8899b4; white-space: nowrap; }
+  /* Sparkline */
+  .spark { display: flex; align-items: flex-end; gap: 3px; height: 120px; }
+  .spark-col { flex: 1; height: 100%; display: flex; align-items: flex-end; }
+  .spark-bar {
+    width: 100%; border-radius: 3px 3px 0 0;
+    background: linear-gradient(to top, #5b9cf866, var(--accent));
+    min-height: 3px;
+    transition: opacity .15s;
+    animation: bar-grow 0.7s ease-out both;
+    transform-origin: bottom;
+  }
+  .spark-col:hover .spark-bar { opacity: 0.6; }
+  @keyframes bar-grow { from { transform: scaleY(0); } to { transform: scaleY(1); } }
 
-  .empty-state { background: #0d1424; border: 1px solid #1e2d47; border-radius: 8px; padding: 2rem; text-align: center; color: #8899b4; }
+  /* Horizontal bars (top apps) */
+  .hbars { display: flex; flex-direction: column; gap: 0.55rem; }
+  .hbar-row { display: flex; align-items: center; gap: 0.7rem; }
+  .hbar-name { font-size: 0.8rem; color: var(--muted); width: 110px; flex-shrink: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .hbar-track { flex: 1; height: 8px; background: var(--surface2); border-radius: 4px; overflow: hidden; }
+  .hbar-fill { height: 100%; background: linear-gradient(90deg, var(--accent), #5b9cf880); border-radius: 4px; animation: grow-x 0.7s ease-out both; transform-origin: left; }
+  .hbar-count { font-size: 0.76rem; color: var(--faint); width: 44px; text-align: right; flex-shrink: 0; font-variant-numeric: tabular-nums; }
+
+  /* KEV list */
+  .kev-list { display: flex; flex-direction: column; gap: 0; padding: 0.4rem 1.4rem; }
+  .kev-item { display: flex; align-items: baseline; gap: 0.6rem; padding: 0.6rem 0; border-top: 1px solid var(--border); text-decoration: none; }
+  .kev-item:first-child { border-top: none; }
+  .kev-item:hover .kev-title { color: var(--red); }
+  .badge-kev { background: var(--red); color: #fff; font-size: 0.6rem; font-weight: 700; padding: 1.5px 6px; border-radius: 4px; text-transform: uppercase; flex-shrink: 0; align-self: center; }
+  .kev-title { font-size: 0.85rem; color: var(--text); flex: 1; min-width: 0; line-height: 1.45; transition: color .15s; }
+  .kev-date { font-size: 0.72rem; color: var(--faint); flex-shrink: 0; }
+
+  /* Sources */
+  .src-list { display: flex; flex-direction: column; gap: 0.45rem; }
+  .src-row { display: flex; align-items: center; gap: 0.7rem; }
+  .src-row.src-quiet { opacity: 0.45; }
+  .src-name { font-size: 0.78rem; color: var(--muted); width: 200px; flex-shrink: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .src-track { flex: 1; height: 6px; background: var(--surface2); border-radius: 3px; overflow: hidden; }
+  .src-fill { height: 100%; background: var(--accent); border-radius: 3px; opacity: 0.8; animation: grow-x 0.7s ease-out both; transform-origin: left; }
+  .src-count { font-size: 0.74rem; color: var(--muted); width: 58px; text-align: right; flex-shrink: 0; font-variant-numeric: tabular-nums; }
+  .src-fetch { font-size: 0.7rem; color: var(--faint); width: 90px; text-align: right; flex-shrink: 0; white-space: nowrap; }
+
+  .empty-state { border: 1px dashed var(--border2); border-radius: 8px; padding: 2rem; text-align: center; color: var(--muted); }
 </style>

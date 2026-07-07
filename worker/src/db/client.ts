@@ -69,6 +69,13 @@ export async function runMigrations(): Promise<void> {
     CREATE INDEX IF NOT EXISTS idx_summaries_profile_period ON summaries(profile_id, period_type, period_start DESC);
   `);
 
+  // Colonnes ajoutées après la v0.1 (idempotent)
+  await pool.query(`
+    ALTER TABLE summaries ADD COLUMN IF NOT EXISTS lang VARCHAR(2) NOT NULL DEFAULT 'fr';
+    ALTER TABLE summaries ADD COLUMN IF NOT EXISTS mode VARCHAR(10) NOT NULL DEFAULT 'concise';
+    CREATE INDEX IF NOT EXISTS idx_summaries_lang ON summaries(profile_id, period_type, period_start, lang, mode);
+  `);
+
   console.log("Migrations complete.");
 }
 
